@@ -739,6 +739,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
   function boot(token, msg) {
     $("login").hidden = true;
+    $("app").hidden = false;
     $("app").style.display = "";
     load(token)
       .then(function (d) {

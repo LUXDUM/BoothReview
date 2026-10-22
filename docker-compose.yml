@@ -1,0 +1,100 @@
+name: boothreview
+
+x-logging: &logging
+  driver: json-file
+  options:
+    # ログの肥大化防止 (ローテーション)
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  api:
+    build: ./server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    ports:
+      # ホスト内部のみ (127.0.0.1) に公開。ルーター/外部には一切開けない。
+      # ヘルスチェックを Uptime Kuma 等で見る場合、同じサーバー上なら 127.0.0.1:<port> を指定する。
+      - "127.0.0.1:${API_PORT:-8080}:${API_PORT:-8080}"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch(`http://127.0.0.1:${API_PORT}/healthz`).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - internal
+    logging: *logging
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # ポートは公開しない (内部ネットワークのみ)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+    logging: *logging
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      api:
+        condition: service_started
+    # 送信のみ (Cloudflare からの受信ポート開放は不要)
+    networks:
+      - internal
+    logging: *logging
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: /entrypoint.sh
+    environment:
+      PGHOST: db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      BACKUP_TIME: ${BACKUP_TIME:-03:30}
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      - ./server/docker/backup/entrypoint.sh:/entrypoint.sh:ro
+      # バックアップ保存先は別ディスク等のパスを指定する (例 /mnt/backup/boothreview)
+      - ${BACKUP_DIR:-./backups}:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+    logging: *logging
+
+volumes:
+  db-data:
+
+networks:
+  internal:
+    driver: bridge

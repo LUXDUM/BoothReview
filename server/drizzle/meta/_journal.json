@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792675569660,
+      "tag": "0000_moaning_rawhide_kid",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792675700000,
+      "tag": "0001_review_checks_and_stats_trigger",
+      "breakpoints": true
+    }
+  ]
+}

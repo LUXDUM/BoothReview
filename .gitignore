@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+backups/
+*.log
+extension/.output/
+extension/.wxt/
+coverage/

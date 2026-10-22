@@ -25,11 +25,13 @@ type StorageApi = { local: ChromeStorageLocal };
 type ChromeLike = { storage?: StorageApi };
 
 function chromeApi(): StorageApi {
-  const c = globalThis as unknown as ChromeLike;
-  if (!c.storage || typeof c.storage.local?.get !== "function") {
+  const c = globalThis as unknown as ChromeLike & { chrome?: ChromeLike };
+  // Chrome の content script では chrome 名前空間は globalThis のプロパティ (globalThis.storage ではない)
+  const storage = c.storage ?? c.chrome?.storage;
+  if (!storage || typeof storage.local?.get !== "function") {
     throw new Error("chrome.storage.local is unavailable in this context");
   }
-  return c.storage;
+  return storage;
 }
 
 /** 取得し、無ければ生成して保存して返す (失敗時は Error を投げる) */

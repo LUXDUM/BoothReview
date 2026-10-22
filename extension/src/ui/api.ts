@@ -30,11 +30,13 @@ type ChromeLike = { runtime?: ChromeRuntime };
 const CALL_TIMEOUT_MS = 20_000;
 
 function runtimeApi(): ChromeRuntime {
-  const c = globalThis as unknown as ChromeLike;
-  if (!c.runtime || typeof c.runtime.sendMessage !== "function") {
+  const c = globalThis as unknown as ChromeLike & { chrome?: ChromeLike };
+  // Chrome の content script では chrome 名前空間は globalThis のプロパティ (globalThis.runtime ではない)
+  const rt = c.runtime ?? c.chrome?.runtime;
+  if (!rt || typeof rt.sendMessage !== "function") {
     throw new Error("chrome.runtime is unavailable in this context");
   }
-  return c.runtime;
+  return rt;
 }
 
 export function apiCall<T>(

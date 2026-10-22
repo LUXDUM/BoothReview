@@ -3,13 +3,13 @@ import {
   extractShopFromUrl,
   findMountAnchor,
   findShopBadgeAnchor,
-  findShopMountAnchor,
+  findBottomMountAnchor,
   attachPanelHost,
   attachBadgeHost,
   isShopPage,
 } from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
-import { mountPanel, mountShopBadge, type PanelHandle } from "../src/ui/panel";
+import { mountPanel, mountBadge, type PanelHandle } from "../src/ui/panel";
 import { API_ORIGIN } from "../src/shared/config";
 
 /**
@@ -39,7 +39,15 @@ export default defineContentScript({
     let badge: PanelHandle | null = null;
 
     function mountItem(itemId: number): void {
-      const anchor = findMountAnchor(document);
+      // ☆バッジ (商品ページも上部に配置。押すと下までスクロール)
+      const badgeAnchor = findMountAnchor(document);
+      if (badgeAnchor) {
+        const badgeHost = attachBadgeHost(document, badgeAnchor);
+        const badgeRoot = badgeHost.shadowRoot ?? badgeHost.attachShadow({ mode: "open" });
+        badge = mountBadge({ shadowRoot: badgeRoot, target: { kind: "item", itemId } });
+      }
+      // レビュー一覧 + 投稿フォーム (ページ最下部)。フッターが見つからない場合は従来の上部位置へ
+      const anchor = findBottomMountAnchor(document) ?? findMountAnchor(document);
       if (!anchor) return; // BOOTH 側 DOM の読み込み待ち (observer が再試行する)
       const host = attachPanelHost(document, anchor);
       // すでに Shadow DOM がある場合 (BOOTH 側再描画でノードだけ消された等) は再利用
@@ -59,10 +67,10 @@ export default defineContentScript({
       if (badgeAnchor) {
         const badgeHost = attachBadgeHost(document, badgeAnchor);
         const badgeRoot = badgeHost.shadowRoot ?? badgeHost.attachShadow({ mode: "open" });
-        badge = mountShopBadge({ shadowRoot: badgeRoot, shop });
+        badge = mountBadge({ shadowRoot: badgeRoot, target: { kind: "shop", shop } });
       }
       // レビュー一覧 (投稿は商品ページから)
-      const anchor = findShopMountAnchor(document);
+      const anchor = findBottomMountAnchor(document);
       if (!anchor) return; // アンカー未検出 → observer/ポーリングが再試行する (mountedTarget は未設定)
       const host = attachPanelHost(document, anchor);
       const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
@@ -89,10 +97,16 @@ export default defineContentScript({
       if (itemId !== null) {
         const want = `items:${itemId}`;
         if (want === mountedTarget) {
-          // パネルが BOOTH 側の再描画で消された場合は付け直す
-          if (!document.getElementById("boothreview-panel-host")) {
+          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す
+          if (
+            !document.getElementById("boothreview-panel-host") ||
+            (findMountAnchor(document) !== null &&
+              document.getElementById("boothreview-badge-host") === null)
+          ) {
             panel?.destroy();
             panel = null;
+            badge?.destroy();
+            badge = null;
             mountItem(itemId);
           }
           return;

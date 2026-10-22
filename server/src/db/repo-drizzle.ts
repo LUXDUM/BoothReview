@@ -117,12 +117,16 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       // 更新/新規どちらかを返すため、まず既存を探す (レース時は後段で仕上げる)
       const existing = await this.findReviewByAuthor(itemId, authorHashHex);
       if (existing) {
+        // ユーザー自身の削除 (deleted) からの再投稿は「新規投稿」として復活させる。
+        // 管理者/通報による hidden は報告スパム対策のため復活させない (仕様 5.2)。
+        const revive = existing.status === "deleted";
         const updated = await db
           .update(reviews)
           .set({
             rating,
             body,
             updatedAt: new Date(),
+            ...(revive ? { status: "published" as const, hiddenReason: null } : {}),
             // ショップは指定があったときだけ更新 (旧データの紐付けを消さない)
             ...(shop !== undefined ? { shop } : {}),
           })
@@ -141,12 +145,14 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
         if (isUniqueViolation(e)) {
           const again = await this.findReviewByAuthor(itemId, authorHashHex);
           if (again) {
+            const reviveAgain = again.status === "deleted";
             const updated = await db
               .update(reviews)
               .set({
                 rating,
                 body,
                 updatedAt: new Date(),
+                ...(reviveAgain ? { status: "published" as const, hiddenReason: null } : {}),
                 ...(shop !== undefined ? { shop } : {}),
               })
               .where(eq(reviews.id, again.id))

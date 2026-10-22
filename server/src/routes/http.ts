@@ -342,7 +342,8 @@ export function createApp(deps: AppDeps): Hono {
     const anonId = requireAnonHeader(c);
     const hash = authorHash(config.pepper, anonId);
     const review = await repo.findReviewByAuthor(itemId, hash);
-    return c.json({ review: review ? toPublic(review) : null });
+    // 削除済み (deleted) は「自分のレビューが無い」扱い (再投稿できる)
+    return c.json({ review: review && review.status !== "deleted" ? toPublic(review) : null });
   });
 
   app.post("/v1/items/:itemId/reviews", async (c) => {

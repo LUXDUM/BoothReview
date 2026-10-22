@@ -413,12 +413,14 @@ const PANEL_CSS = `
 
 export type BadgeHandle = { destroy(): void };
 
+type BadgeTarget = { kind: "item"; itemId: number } | { kind: "shop"; shop: string };
+
 /**
- * ショップページ最上部の「全体評価 ☆バッジ」。
+ * ページ最上部の「全体評価 ☆バッジ」 (商品・ショップ共通)。
  * 押すとページ下部のレビュー一覧までスクロールする。
  */
-export function mountShopBadge(deps: { shadowRoot: ShadowRoot; shop: string }): BadgeHandle {
-  const { shadowRoot, shop } = deps;
+export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }): BadgeHandle {
+  const { shadowRoot, target } = deps;
 
   shadowRoot.innerHTML = "";
   const style = document.createElement("style");
@@ -427,11 +429,12 @@ export function mountShopBadge(deps: { shadowRoot: ShadowRoot; shop: string }): 
   badge.type = "button";
   badge.className = "brb-root";
   badge.textContent = "☆ 読み込み中…";
-  badge.setAttribute("aria-label", "ショップ全体の評価へ移動");
+  badge.setAttribute("aria-label", "全レビュー評価へ移動");
   shadowRoot.append(style, badge);
 
   void (async () => {
-    const res = await api.shopSummary(shop);
+    const res =
+      target.kind === "item" ? await api.summary(target.itemId) : await api.shopSummary(target.shop);
     if (!res.ok) {
       badge.textContent = "☆ レビュー";
       return;

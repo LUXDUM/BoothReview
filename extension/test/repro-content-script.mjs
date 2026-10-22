@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
 const ITEM_URL = "https://booth.pm/ja/items/9026363";
-const HTML = `<!doctype html><html><head><title>t</title></head><body><div id="content"><h1>item</h1></div></body></html>`;
+const HTML = `<!doctype html><html><head><title>t</title></head><body><div id="content"><h1>item</h1></div><footer class="footer__menu bg-white">footer</footer></body></html>`;
 
 const dom = new JSDOM(HTML, { url: ITEM_URL, pretendToBeVisual: true });
 const { window } = dom;
@@ -84,6 +84,7 @@ await new Promise((r) => setTimeout(r, 3000));
 
 console.log("=== mounted host:", window.document.getElementById("boothreview-panel-host") ? "YES" : "NO");
 const shadow = window.document.getElementById("boothreview-panel-host")?.shadowRoot;
+console.log("=== badge host:", window.document.getElementById("boothreview-badge-host") ? "YES" : "NO");
 console.log("=== summary text (shadow):", shadow?.querySelector(".br-summary")?.textContent ?? "(no panel)");
 console.log("=== form visible:", shadow?.querySelector(".br-form")?.children.length ?? 0, "children");
 console.log("=== api calls (sendMessage):", calls.length);

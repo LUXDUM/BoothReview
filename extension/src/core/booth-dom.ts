@@ -82,30 +82,34 @@ export function isShopPage(url: string): boolean {
 }
 
 /**
- * ショップページでレビュー一覧を差し込む「境界」アンカー。
+ * レビュー一覧を差し込む「ページ最下部の境界」アンカー。商品・ショップ両ページで共通。
  * 挿入は attachPanelHost の「anchor の直前」に行われる。
  * - できれば「フォロー中ショップの提案」ブロックの前
- * - 見つからなければ shop フッターの直前 (= ページ最下部)
+ * - 見つからなければ BOOTH のフッターの直前 (= ページ最下部)
+ *   ※ 商品ページ (booth.pm/items/…) にも FOOTER.footer__menu がある (実機確認済み)
  */
-const SHOP_MOUNT_ANCHOR_SELECTORS: readonly string[] = [
+const BOTTOM_MOUNT_ANCHOR_SELECTORS: readonly string[] = [
   ".js-recommend-shops",
   "#js-recommend-shops",
   ".shop-follow-section",
-  // フォールバック: BOOTH ショップページのフッター (実機確認済みの安定要素)
+  // フォールバック: BOOTH のフッター
   "#shop_default .page-wrap footer",
   "footer",
 ];
 
-export function findShopMountAnchor(doc: Document): Element | null {
-  for (const sel of SHOP_MOUNT_ANCHOR_SELECTORS) {
+export function findBottomMountAnchor(doc: Document): Element | null {
+  for (const sel of BOTTOM_MOUNT_ANCHOR_SELECTORS) {
     const el = doc.querySelector(sel);
     if (el) return el;
   }
   return null;
 }
 
+/** 後方互換のための別名 (旧実装の名前がテスト・将来コードで使われる可能性に備える) */
+export const findShopMountAnchor = findBottomMountAnchor;
+
 /**
- * 「全体評価 ☆バッジ」を置く一番上のアンカー。
+ * 「全体評価 ☆バッジ」を置く一番上のアンカー (ショップページ)。
  * メインコンテンツ (商品一覧) の直前 = ショップヘッダー (名前等) の直下に来る。
  */
 const SHOP_BADGE_ANCHOR_SELECTORS: readonly string[] = [

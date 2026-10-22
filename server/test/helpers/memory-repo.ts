@@ -103,6 +103,11 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       );
       const now = new Date();
       if (existing) {
+        // ユーザー自身の削除からの再投稿は「新規投稿」として復活 (hidden は復活させない)
+        if (existing.status === "deleted") {
+          existing.status = "published";
+          existing.hiddenReason = null;
+        }
         existing.rating = input.rating;
         existing.body = input.body;
         if (input.shop !== undefined) existing.shop = input.shop;

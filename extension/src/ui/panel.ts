@@ -27,6 +27,7 @@ export function mountPanel(deps: MountDeps): PanelHandle {
   let mine: ApiReview | null = null;
   let editing = false;
   let destroyed = false;
+  let selectedRating = 0;
 
   const el: CreateEl = (tag, cls, text) => {
     const node = document.createElement(tag);
@@ -181,9 +182,7 @@ export function mountPanel(deps: MountDeps): PanelHandle {
     return e instanceof Error ? e.message : String(e);
   }
 
-  // ---- post / edit form ----
-
-  let selectedRating = 0;
+  // ---- post / edit form (selection state は冒頭で宣言済み) ----
 
   function renderForm(): void {
     formArea.replaceChildren();

@@ -26,6 +26,9 @@ type ChromeRuntime = {
 
 type ChromeLike = { runtime?: ChromeRuntime };
 
+/** 停滞時に「読み込み中のまま」にならないよう、一定時間でタイムアウトさせる */
+const CALL_TIMEOUT_MS = 20_000;
+
 function runtimeApi(): ChromeRuntime {
   const c = globalThis as unknown as ChromeLike;
   if (!c.runtime || typeof c.runtime.sendMessage !== "function") {
@@ -43,12 +46,24 @@ export function apiCall<T>(
   const runtime = runtimeApi();
 
   return new Promise((resolve) => {
+    // Service Worker が起動していない/応答しない場合でも UI が固まらないようにする
+    const timer = setTimeout(() => {
+      resolve({
+        ok: false,
+        status: 0,
+        message: "バックグラウンド応答なし (拡張を再読込してください: chrome://extensions の更新ボタン)",
+      });
+    }, CALL_TIMEOUT_MS);
+    const finish = (r: ApiResult<T>): void => {
+      clearTimeout(timer);
+      resolve(r);
+    };
     try {
       runtime.sendMessage(
         { type: "api-request", requestId, method, path, body: opts.body, anonId: opts.anonId },
         (response) => {
           if (chrome.runtime.lastError) {
-            resolve({
+            finish({
               ok: false,
               status: 0,
               message: chrome.runtime.lastError.message ?? "extension runtime error",
@@ -57,11 +72,11 @@ export function apiCall<T>(
           }
           const resp = response as ApiResponseMessage | undefined;
           if (!resp || resp.type !== "api-response" || resp.requestId !== requestId) {
-            resolve({ ok: false, status: 0, message: "malformed response from service worker" });
+            finish({ ok: false, status: 0, message: "malformed response from service worker" });
             return;
           }
           if (resp.networkError || resp.status === 0) {
-            resolve({
+            finish({
               ok: false,
               status: 0,
               message: `ネットワークエラー: ${resp.error ?? "APIに接続できません"}`,
@@ -70,7 +85,7 @@ export function apiCall<T>(
           }
           if (!resp.ok) {
             const err = errorOf(resp.data);
-            resolve({
+            finish({
               ok: false,
               status: resp.status,
               code: err?.code,
@@ -78,11 +93,11 @@ export function apiCall<T>(
             });
             return;
           }
-          resolve({ ok: true, status: resp.status, data: resp.data as T });
+          finish({ ok: true, status: resp.status, data: resp.data as T });
         },
       );
     } catch (e) {
-      resolve({
+      finish({
         ok: false,
         status: 0,
         message: e instanceof Error ? e.message : String(e),

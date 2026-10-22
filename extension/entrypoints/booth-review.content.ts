@@ -1,6 +1,7 @@
 import { extractItemIdFromUrl, findMountAnchor, attachPanelHost } from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
 import { mountPanel, type PanelHandle } from "../src/ui/panel";
+import { API_ORIGIN } from "../src/shared/config";
 
 /**
  * BOOTH 商品ページにレビューパネルを差し込む content script。
@@ -20,6 +21,7 @@ export default defineContentScript({
   matches: ["*://*.booth.pm/*"],
   runAt: "document_idle",
   main: () => {
+    console.info("[BoothReview] content script loaded, API:", API_ORIGIN);
     let mountedItemId: number | null = null;
     let panel: PanelHandle | null = null;
 

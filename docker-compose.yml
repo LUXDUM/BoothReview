@@ -16,9 +16,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     ports:
-      # ホスト内部のみ (127.0.0.1) に公開。ルーター/外部には一切開けない。
-      # ヘルスチェックを Uptime Kuma 等で見る場合、同じサーバー上なら 127.0.0.1:<port> を指定する。
-      - "127.0.0.1:${API_PORT:-8080}:${API_PORT:-8080}"
+      # ホスト側のみ `${API_PORT}` に露出 (127.0.0.1 bind)。コンテナ内は固定 8080。
+      # 例: 宿マシンの 8080 が他サービス (MagicMirror 等) で使用中なら API_PORT=18080 を .env に。
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
@@ -28,7 +28,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch(`http://127.0.0.1:${API_PORT}/healthz`).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "fetch(`http://127.0.0.1:8080/healthz`).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s

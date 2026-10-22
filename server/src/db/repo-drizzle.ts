@@ -197,7 +197,7 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           createdAt: reviews.createdAt,
           updatedAt: reviews.updatedAt,
           reportCount: sql<number>`(
-            SELECT COUNT(*) FROM ${reports} WHERE ${reports.reviewId} = ${reviews.id}
+            SELECT COUNT(*) FROM reports WHERE reports.review_id = reviews.id
           )`,
         })
         .from(reviews)

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
+import { promises as fsp } from "node:fs";
 import { z, ZodError } from "zod";
 import type { Config } from "../config.js";
 import type { ReviewRecord, ReviewRepository, ReviewStatus } from "../lib/repo.js";
@@ -408,6 +409,48 @@ export function createApp(deps: AppDeps): Hono {
     await next();
   });
 
+  // --- 管理ダッシュボード ---
+
+  // HTML シェル (データは Bearer 認証付きで /v1/admin/stats から取得するため、シェル自体は公開で可)
+  app.get("/admin/dashboard", (c) => c.html(DASHBOARD_HTML));
+
+  // ディスク使用率 (失敗時は null → UI で「取得不可」表示)
+  async function diskUsage(): Promise<{ totalBytes: number; freeBytes: number } | null> {
+    try {
+      const s = await fsp.statfs("/");
+      return {
+        totalBytes: Number(s.blocks) * Number(s.bsize),
+        freeBytes: Number(s.bavail) * Number(s.bsize),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  // バックアップディレクトリの一覧 (read-only マウント前提。無い場合は空)
+  async function listBackups(dir: string) {
+    try {
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      const out = [];
+      for (const e of entries) {
+        if (!e.isFile()) continue;
+        const st = await fsp.stat(`${dir}/${e.name}`);
+        out.push({ file: e.name, bytes: st.size, modifiedAt: st.mtime.toISOString() });
+      }
+      out.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  app.get("/v1/admin/stats", async (c) => {
+    limitOrThrow(`admin:${clientIp(c) ?? "unknown"}`, config.rateLimits.adminPerIpPerMinute, MINUTE_MS);
+    const data = await repo.adminStats();
+    const [disk, backups] = await Promise.all([diskUsage(), listBackups(config.backupDir)]);
+    return c.json({ ...data, disk, backups });
+  });
+
   app.get("/v1/admin/reviews", async (c) => {
     const statusParam = asReq(c).req.query("status");
     const status: ReviewStatus | undefined = statusParam
@@ -415,12 +458,25 @@ export function createApp(deps: AppDeps): Hono {
       : undefined;
     const itemIdRaw = asReq(c).req.query("itemId");
     const itemId = itemIdRaw ? parseWith(itemIdSchema, itemIdRaw) : undefined;
+    const queryRaw = asReq(c).req.query("query");
+    const query = queryRaw ? parseWith(z.string().min(1).max(200), queryRaw) : undefined;
+    const orderRaw = asReq(c).req.query("order");
+    const order = orderRaw
+      ? parseWith(z.enum(["created", "reports"]), orderRaw)
+      : undefined;
     const page = parseWith(pageSchema, asReq(c).req.query("page") ?? "1");
     const perPage = parseWith(
       perPageSchema,
       asReq(c).req.query("perPage") ?? String(config.perPageDefault),
     );
-    const { items, total } = await repo.adminListReviews({ status, itemId, page, perPage });
+    const { items, total } = await repo.adminListReviews({
+      status,
+      itemId,
+      query,
+      order,
+      page,
+      perPage,
+    });
     return c.json({
       reviews: items.map(toAdminReview),
       page,
@@ -448,3 +504,262 @@ export function createApp(deps: AppDeps): Hono {
 
   return app;
 }
+
+/**
+ * 管理ダッシュボード (HTMLシェル)。
+ * - データは /v1/admin/stats を Bearer 付き fetch で取得する (シェル自体はデータを含まない)
+ * - 外部スクリプト/CSS 不使用。本文は textContent で描画する (XSS 対策)
+ */
+const DASHBOARD_HTML = `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOOTHReview 管理ダッシュボード</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #222; font-size: 14px; }
+  header { background: #173a5e; color: #fff; padding: 14px 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .spacer { flex: 1; }
+  main { max-width: 1080px; margin: 0 auto; padding: 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .card { background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 12px 14px; }
+  .card .k { color: #6b7280; font-size: 12px; }
+  .card .v { font-size: 22px; font-weight: 700; margin-top: 2px; }
+  section { background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; color: #173a5e; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef0f3; vertical-align: top; }
+  th { color: #6b7280; font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td .clip { max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .barwrap { display: flex; align-items: flex-end; gap: 3px; height: 90px; padding-top: 4px; }
+  .barwrap .bar { flex: 1; background: #2f6fab; border-radius: 2px 2px 0 0; min-height: 1px; position: relative; }
+  .barwrap .bar.zero { background: #e5e7eb; }
+  .barwrap .bar span { display: none; }
+  .barwrap .bar:hover span { display: block; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #173a5e; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; white-space: nowrap; z-index: 2; }
+  .hbar { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+  .hbar .lab { width: 2em; text-align: right; color: #6b7280; font-size: 12px; }
+  .hbar .track { flex: 1; max-width: 480px; background: #eef0f3; border-radius: 4px; height: 14px; overflow: hidden; }
+  .hbar .fill { height: 100%; background: #e8a013; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge.published { background: #e3f5e9; color: #1c7c3c; }
+  .badge.hidden { background: #fdecea; color: #b3261e; }
+  .badge.deleted { background: #ececec; color: #666; }
+  .muted { color: #6b7280; }
+  button { font: inherit; }
+  #login, #error { max-width: 380px; margin: 12vh auto; text-align: center; background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 22px; }
+  #error { color: #b3261e; }
+  input[type=password] { width: 100%; padding: 8px; border: 1px solid #cbd2da; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  .btn { background: #0074c8; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .ghost { background: #eef0f3; color: #333; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  a { color: #0074c8; }
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <h2>BOOTHReview 管理ダッシュボード</h2>
+  <p class="muted">ADMIN_TOKEN を入力してください</p>
+  <p><input id="token" type="password" placeholder="ADMIN_TOKEN" autofocus></p>
+  <p><button id="loginBtn" class="btn" type="button">ログイン</button></p>
+</div>
+<div id="error" hidden></div>
+<div id="app" hidden style="display:none">
+  <header>
+    <h1>BOOTHReview 管理ダッシュボード</h1>
+    <span class="spacer"></span>
+    <button id="reload" class="ghost" type="button">更新</button>
+    <span id="at" class="muted" style="font-size:12px"></span>
+  </header>
+  <main>
+    <div id="cards" class="cards"></div>
+    <section><h2>星評価の分布 (公開レビュー)</h2><div id="dist"></div></section>
+    <section><h2>投稿の推移 (直近30日・全ステータス)</h2><div id="trend" class="barwrap"></div></section>
+    <section><h2>通報の多いレビュー</h2><div id="reported"></div></section>
+    <section><h2>レビューの多いアイテム (公開)</h2><div id="items"></div></section>
+    <section><h2>サーバー容量</h2><div id="server"></div></section>
+  </main>
+</div>
+<script>
+(function () {
+  "use strict";
+  var KEY = "br-admin-token";
+  var $ = function (id) { return document.getElementById(id); };
+  function mb(n) { return (n / 1024 / 1024).toFixed(1) + " MB"; }
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+  function statusName(status) {
+    return { published: "公開", hidden: "非表示", deleted: "削除" }[status] || status;
+  }
+  function fmtBytes(n) { return n === null || n === undefined ? "―" : mb(n); }
+
+  function renderCards(d) {
+    var c = d.counts;
+    var cards = [
+      ["レビュー (合計)", c.total],
+      ["公開", c.published],
+      ["非表示", c.hidden],
+      ["削除", c.deleted],
+      ["平均評価 (公開)", d.avgRating === null ? "―" : d.avgRating.toFixed(2)],
+      ["通報 (合計)", d.reportTotal]
+    ];
+    var wrap = $("cards"); wrap.textContent = "";
+    for (var i = 0; i < cards.length; i++) {
+      var card = el("div", "card");
+      card.append(el("div", "k", cards[i][0]), el("div", "v", String(cards[i][1])));
+      wrap.append(card);
+    }
+    if (d.disk) {
+      var diskCard = el("div", "card");
+      var used = d.disk.totalBytes - d.disk.freeBytes;
+      diskCard.append(el("div", "k", "ディスク使用率"));
+      diskCard.append(el("div", "v", Math.round(used / d.disk.totalBytes * 100) + "%"));
+      wrap.appendChild(diskCard);
+    }
+  }
+
+  function renderDist(d) {
+    var wrap = $("dist"); wrap.textContent = "";
+    var max = Math.max.apply(null, d.ratingDistribution.concat([1]));
+    for (var r = 5; r >= 1; r--) {
+      var row = el("div", "hbar");
+      row.append(el("span", "lab", r + "★"));
+      var track = el("div", "track");
+      var fill = el("div", "fill");
+      fill.style.width = Math.round(d.ratingDistribution[r - 1] / max * 100) + "%";
+      track.appendChild(fill);
+      row.append(track, el("span", "muted", String(d.ratingDistribution[r - 1])));
+      wrap.appendChild(row);
+    }
+  }
+
+  function renderTrend(d) {
+    var wrap = $("trend"); wrap.textContent = "";
+    var max = Math.max.apply(null, d.trend.map(function (t) { return t.count; }).concat([1]));
+    for (var i = 0; i < d.trend.length; i++) {
+      var bar = el("div", "bar" + (d.trend[i].count === 0 ? " zero" : ""));
+      bar.style.height = Math.max(2, Math.round(d.trend[i].count / max * 84)) + "px";
+      var tip = el("span", "", d.trend[i].day + " : " + d.trend[i].count + "件");
+      bar.appendChild(tip);
+      wrap.appendChild(bar);
+    }
+  }
+
+  function selTable(rows, head) {
+    var t = el("table");
+    var tr = el("tr");
+    for (var i = 0; i < head.length; i++) tr.append(el("th", "", head[i]));
+    t.appendChild(tr);
+    return t;
+  }
+
+  function td(v, cls) { return el("td", cls, v); }
+
+  function renderReported(d) {
+    var wrap = $("reported"); wrap.textContent = "";
+    if (d.topReported.length === 0) { wrap.append(el("div", "muted", "通報はありません")); return; }
+    var t = selTable(d.topReported, ["ID", "商品", "評価", "本文", "状態", "通報", "日時"]);
+    for (var i = 0; i < d.topReported.length; i++) {
+      var r = d.topReported[i];
+      var tr = el("tr");
+      var st = el("span", "badge " + r.status, statusName(r.status));
+      tr.append(
+        td(String(r.id)),
+        td(String(r.itemId)),
+        td("★".repeat(r.rating)),
+        td(r.body, "clip"),
+        (function () { var x = td(""); x.appendChild(st); return x; })(),
+        td(String(r.reportCount)),
+        td(r.createdAt.slice(0, 16).replace("T", " "))
+      );
+      t.appendChild(tr);
+    }
+    wrap.appendChild(t);
+  }
+
+  function renderItems(d) {
+    var wrap = $("items"); wrap.textContent = "";
+    if (d.topItems.length === 0) { wrap.append(el("div", "muted", "公開レビューがありません")); return; }
+    var t = selTable([], ["アイテムID", "レビュー数"]);
+    for (var i = 0; i < d.topItems.length; i++) {
+      var item = d.topItems[i];
+      var tr = el("tr");
+      var a = el("a", "", String(item.itemId));
+      a.href = "https://booth.pm/ja/items/" + item.itemId;
+      a.target = "_blank";
+      a.rel = "noopener";
+      var ac = td(""); ac.appendChild(a); tr.append(ac, td(String(item.count)));
+      t.appendChild(tr);
+    }
+    wrap.appendChild(t);
+  }
+
+  function renderServer(d) {
+    var wrap = $("server"); wrap.textContent = "";
+    var t = selTable([], ["項目", "値"]);
+    var rows = [];
+    rows.push(["DB サイズ", fmtBytes(d.dbSizeBytes)]);
+    for (var i = 0; i < d.tableSizes.length; i++) rows.push(["テーブル " + d.tableSizes[i].table, fmtBytes(d.tableSizes[i].bytes)]);
+    if (d.disk) rows.push(["ディスク合計", fmtBytes(d.disk.totalBytes)], ["ディスク空き", fmtBytes(d.disk.freeBytes)]);
+    else rows.push(["ディスク合計", "取得不可"]);
+    for (var b = 0; b < d.backups.length && b < 10; b++) rows.push(["バックアップ " + d.backups[b].file, fmtBytes(d.backups[b].bytes)]);
+    if (d.backups.length === 0) rows.push(["バックアップ", "まだありません"]);
+    for (var k = 0; k < rows.length; k++) {
+      var tr = el("tr"); tr.append(td(rows[k][0]), td(rows[k][1])); t.appendChild(tr);
+    }
+    wrap.appendChild(t);
+  }
+
+  function render(d) {
+    renderCards(d); renderDist(d); renderTrend(d); renderReported(d); renderItems(d); renderServer(d);
+    $("at").textContent = new Date().toLocaleString() + " 取得";
+  }
+
+  function load(token) {
+    return fetch("/v1/admin/stats", { headers: { authorization: "Bearer " + token } })
+      .then(function (res) {
+        if (res.status === 401) throw new Error("トークンが違います (ADMIN_TOKEN)");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      });
+  }
+
+  function showLogin(msg) {
+    $("app").style.display = "none";
+    $("error").hidden = true;
+    $("login").hidden = false;
+    if (msg) $("login").querySelector("p.muted").textContent = msg;
+  }
+
+  function boot(token, msg) {
+    $("login").hidden = true;
+    $("app").style.display = "";
+    load(token)
+      .then(function (d) {
+        sessionStorage.setItem(KEY, token);
+        render(d);
+      })
+      .catch(function (e) {
+        showLogin(e.message);
+      });
+  }
+
+  $("loginBtn").addEventListener("click", function () { boot($("token").value); });
+  $("token").addEventListener("keydown", function (e) { if (e.key === "Enter") boot($("token").value); });
+  $("reload").addEventListener("click", function () {
+    var t = sessionStorage.getItem(KEY);
+    if (t) load(t).then(render).catch(function (e) { showLogin(e.message); });
+  });
+
+  var saved = sessionStorage.getItem(KEY);
+  if (saved) boot(saved); else showLogin();
+})();
+</script>
+</body>
+</html>`;

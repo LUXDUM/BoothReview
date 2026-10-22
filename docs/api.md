@@ -127,7 +127,7 @@ Response `{ "ok": true }`(通報数は応答しない)
 
 ### GET `/v1/admin/reviews`
 
-Query: `status`(`published|hidden|deleted`)、`itemId`、`page`、`perPage`。
+Query: `status`(`published|hidden|deleted`)、`itemId`、`query`(本文部分一致, 最大200文字)、`order`(`created`=既定 / `reports`=通報数の多い順)、`page`、`perPage`。
 
 ```json
 {
@@ -151,6 +151,26 @@ Body:
 - `published` に戻すと `hidden_reason=null`
 
 Response: 更新後のレビュー(通報数を含む)。
+
+### GET `/v1/admin/stats`
+
+管理ダッシュボード用の集計 (JSON)。IP あたり `RATE_LIMIT_ADMIN_PER_IP_PER_MINUTE`(既定20回/分)。
+
+- `counts`: レビュー件数 (total / published / hidden / deleted)
+- `avgRating`: 公開レビューの平均評価 (null 許容)
+- `ratingDistribution`: 星1〜5 の分布 (公開レビューのみ)
+- `reportTotal` / `topReported`: 通報の総数と、通報が多いレビュー TOP10 (本文・status・通報数付き)
+- `trend`: 直近30日の日次投稿数 (ゼロ埋め, UTC 日付)
+- `topItems`: 公開レビューの多いアイテム TOP10
+- `dbSizeBytes` / `tableSizes`: DB キャパシティ (`pg_database_size` / テーブル別)
+- `disk`: ディスク合計・空き (取得できない環境では `null`)
+- `backups`: バックアップディレクトリのファイル一覧とサイズ (`BACKUPS_DIR`, read-only マウント)
+
+### GET `/admin/dashboard`
+
+管理ダッシュボードの HTML (ブラウザで開く)。このページ自体はデータを含まず、
+ページ内で `ADMIN_TOKEN` を入力すると `GET /v1/admin/stats` を Bearer 認証付きで呼び出して描画する。
+トークンは sessionStorage に保持され、タブを閉じると消える。
 
 ---
 

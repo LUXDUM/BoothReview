@@ -45,6 +45,9 @@ const envSchema = z.object({
   RATE_LIMIT_REPORT_PER_ANON_PER_HOUR: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_LIST_PER_IP_PER_MINUTE: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_MINE_PER_IP_PER_MINUTE: z.coerce.number().int().positive().default(30),
+  RATE_LIMIT_ADMIN_PER_IP_PER_MINUTE: z.coerce.number().int().positive().default(20),
+  // 管理ダッシュボードで一覧するバックアップディレクトリ (api コンテナに read-only でマウント)
+  BACKUPS_DIR: z.string().default("/backups"),
   PER_PAGE_DEFAULT: z.coerce.number().int().positive().default(10),
   PER_PAGE_MAX: z.coerce.number().int().positive().default(50),
   CACHE_MAX_AGE_SECONDS: z.coerce.number().int().nonnegative().default(60),
@@ -70,10 +73,12 @@ export type Config = {
     reportPerAnonPerHour: number;
     listPerIpPerMinute: number;
     minePerIpPerMinute: number;
+    adminPerIpPerMinute: number;
   };
   perPageDefault: number;
   perPageMax: number;
   cacheMaxAgeSeconds: number;
+  backupDir: string;
 };
 
 export function parseConfig(env: NodeJS.ProcessEnv): Config {
@@ -107,10 +112,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
       reportPerAnonPerHour: e.RATE_LIMIT_REPORT_PER_ANON_PER_HOUR,
       listPerIpPerMinute: e.RATE_LIMIT_LIST_PER_IP_PER_MINUTE,
       minePerIpPerMinute: e.RATE_LIMIT_MINE_PER_IP_PER_MINUTE,
+      adminPerIpPerMinute: e.RATE_LIMIT_ADMIN_PER_IP_PER_MINUTE,
     },
     perPageDefault: e.PER_PAGE_DEFAULT,
     perPageMax: e.PER_PAGE_MAX,
     cacheMaxAgeSeconds: e.CACHE_MAX_AGE_SECONDS,
+    backupDir: e.BACKUPS_DIR,
   };
 }
 

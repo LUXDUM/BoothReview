@@ -1,4 +1,4 @@
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { and, avg, count, desc, eq, ilike, sql } from "drizzle-orm";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { reports, reviewStats, reviews } from "./schema.js";
 import type {
@@ -7,7 +7,6 @@ import type {
   ReviewStatus,
   Summary,
 } from "../lib/repo.js";
-
 type Db = NodePgDatabase<Record<string, never>>;
 
 type Row = {
@@ -34,6 +33,13 @@ function toRecord(row: Row | undefined | null): ReviewRecord | null {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** 管理機能共通: 通報数。生TABLE名で書く (sql テンプレート内の列補間はテーブル名が失われるため) */
+const REPORT_COUNT_SQL = sql`(SELECT COUNT(*) FROM reports WHERE reports.review_id = reviews.id)`;
+
+function escapeLike(input: string): string {
+  return input.replace(/[\\%_]/g, "\\$&");
 }
 
 export function createDrizzleRepository(db: Db): ReviewRepository {
@@ -179,10 +185,11 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       return updated.length > 0;
     },
 
-    async adminListReviews({ status, itemId, page, perPage }) {
+    async adminListReviews({ status, itemId, query, order, page, perPage }) {
       const conds = [];
       if (status) conds.push(eq(reviews.status, status));
       if (itemId !== undefined) conds.push(eq(reviews.itemId, itemId));
+      if (query) conds.push(ilike(reviews.body, `%${escapeLike(query)}%`));
       const where = conds.length > 0 ? and(...conds) : undefined;
 
       const rows = await db
@@ -196,13 +203,15 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           hiddenReason: reviews.hiddenReason,
           createdAt: reviews.createdAt,
           updatedAt: reviews.updatedAt,
-          reportCount: sql<number>`(
-            SELECT COUNT(*) FROM reports WHERE reports.review_id = reviews.id
-          )`,
+          reportCount: REPORT_COUNT_SQL,
         })
         .from(reviews)
         .where(where)
-        .orderBy(desc(reviews.createdAt), desc(reviews.id))
+        .orderBy(
+          ...(order === "reports"
+            ? [sql`${REPORT_COUNT_SQL} desc`, desc(reviews.id)]
+            : [desc(reviews.createdAt), desc(reviews.id)]),
+        )
         .limit(perPage)
         .offset((page - 1) * perPage);
       const totalRows = await db.select({ total: count() }).from(reviews).where(where);
@@ -212,6 +221,127 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           reportCount: Number(r.reportCount),
         })),
         total: Number(totalRows[0]?.total ?? 0),
+      };
+    },
+
+    async adminStats() {
+      // --- status 別件数 ---
+      const statusRows = await db
+        .select({ status: reviews.status, count: count() })
+        .from(reviews)
+        .groupBy(reviews.status);
+      const counts = { total: 0, published: 0, hidden: 0, deleted: 0 };
+      for (const row of statusRows) {
+        const key = row.status as ReviewStatus;
+        counts[key] = Number(row.count);
+        counts.total += Number(row.count);
+      }
+
+      // --- 公開レビューの平均 / 星分布 ---
+      const avgRows = await db
+        .select({ avgRating: avg(reviews.rating) })
+        .from(reviews)
+        .where(eq(reviews.status, "published"));
+      const avgRating = avgRows[0]?.avgRating === undefined || avgRows[0] === undefined
+        ? null
+        : Number(avgRows[0].avgRating);
+      const distRows = await db
+        .select({ rating: reviews.rating, count: count() })
+        .from(reviews)
+        .where(eq(reviews.status, "published"))
+        .groupBy(reviews.rating);
+      const ratingDistribution = [0, 0, 0, 0, 0];
+      for (const row of distRows) {
+        const r = Number(row.rating);
+        if (r >= 1 && r <= 5) ratingDistribution[r - 1] = Number(row.count);
+      }
+
+      // --- 通報 ---
+      const reportRows = await db.select({ total: count() }).from(reports);
+      const reportTotal = Number(reportRows[0]?.total ?? 0);
+      const topRows = await db
+        .select({
+          id: reviews.id,
+          itemId: reviews.itemId,
+          authorHash: reviews.authorHash,
+          rating: reviews.rating,
+          body: reviews.body,
+          status: reviews.status,
+          hiddenReason: reviews.hiddenReason,
+          createdAt: reviews.createdAt,
+          updatedAt: reviews.updatedAt,
+          reportCount: REPORT_COUNT_SQL,
+        })
+        .from(reviews)
+        .orderBy(sql`${REPORT_COUNT_SQL} desc`, desc(reviews.id))
+        .limit(10);
+      const topReported = topRows
+        .map((r) => ({ ...toRecord(r)!, reportCount: Number(r.reportCount) }))
+        .filter((r) => r.reportCount > 0);
+
+      // --- 直近30日の日次投稿数 (ゼロ埋め) ---
+      const trendRows = await db.execute(
+        sql`SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COALESCE(c.count, 0)::int AS count
+            FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') AS d(day)
+            LEFT JOIN (
+              SELECT date_trunc('day', created_at) AS day, COUNT(*) AS count
+              FROM reviews GROUP BY 1
+            ) c ON c.day = d.day
+            ORDER BY d.day`,
+      );
+      const trend = (trendRows.rows as Array<{ day: string; count: number }>).map((r) => ({
+        day: String(r.day),
+        count: Number(r.count),
+      }));
+
+      // --- 公開レビューの多いアイテム ---
+      const itemRows = await db
+        .select({ itemId: reviews.itemId, count: count() })
+        .from(reviews)
+        .where(eq(reviews.status, "published"))
+        .groupBy(reviews.itemId)
+        .orderBy(sql`count(*) desc`)
+        .limit(10);
+      const topItems = itemRows.map((r) => ({ itemId: Number(r.itemId), count: Number(r.count) }));
+
+      // --- DB サイズ ---
+      let dbSizeBytes: number | null = null;
+      try {
+        const sizeRows = await db.execute(
+          sql`SELECT pg_database_size(current_database())::bigint AS size`,
+        );
+        const r = (sizeRows.rows as Array<{ size: string | number }>)[0];
+        dbSizeBytes = r ? Number(r.size) : null;
+      } catch {
+        dbSizeBytes = null;
+      }
+
+      // --- テーブル別サイズ ---
+      let tableSizes: Array<{ table: string; bytes: number }> = [];
+      try {
+        const tRows = await db.execute(
+          sql`SELECT c.relname AS table, pg_total_relation_size(c.oid)::bigint AS bytes
+              FROM pg_class c
+              WHERE c.relname IN ('reviews', 'reports', 'review_stats') AND c.relkind = 'r'`,
+        );
+        tableSizes = (tRows.rows as Array<{ table: string; bytes: string | number }>).map((r) => ({
+          table: String(r.table),
+          bytes: Number(r.bytes),
+        }));
+      } catch {
+        tableSizes = [];
+      }
+
+      return {
+        counts,
+        avgRating,
+        ratingDistribution,
+        reportTotal,
+        topReported,
+        trend,
+        topItems,
+        dbSizeBytes,
+        tableSizes,
       };
     },
   };

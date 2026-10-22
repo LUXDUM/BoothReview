@@ -67,11 +67,52 @@ export type ReviewRepository = {
   /** 管理者操作 / 自動非表示: status の変更 (物理削除はしない) */
   setStatus(reviewId: number, status: ReviewStatus, hiddenReason: string | null): Promise<boolean>;
 
-  /** 管理用一覧 (status / itemId で絞り込み, 通報数付き) */
-  adminListReviews(filter: {
-    status?: ReviewStatus | undefined;
-    itemId?: number | undefined;
-    page: number;
-    perPage: number;
-  }): Promise<{ items: Array<ReviewRecord & { reportCount: number }>; total: number }>;
+  /** 管理用一覧 (status / itemId / 本文検索 / 並び順で絞り込み, 通報数付き) */
+  adminListReviews(filter: AdminListFilter): Promise<{ items: Array<ReviewRecord & { reportCount: number }>; total: number }>;
+
+  /**
+   * 管理ダッシュボード用の集計。ディスク/バックアップ等のホスト情報は
+   * ルート層で付与するためここには含めない。
+   */
+  adminStats(): Promise<AdminStatsData>;
+};
+
+export type AdminListFilter = {
+  status?: ReviewStatus | undefined;
+  itemId?: number | undefined;
+  /** 本文の部分一致検索 (LIKE) */
+  query?: string | undefined;
+  /** 並び順。未指定は作成日時の新しい順 */
+  order?: "created" | "reports" | undefined;
+  page: number;
+  perPage: number;
+};
+
+export type AdminStatsData = {
+  counts: { total: number; published: number; hidden: number; deleted: number };
+  /** 公開レビューのみ対象 */
+  avgRating: number | null;
+  /** rating 1..5 の分布 (公開レビューのみ)。index 0 = rating 1 */
+  ratingDistribution: number[];
+  /** 通報の総数 */
+  reportTotal: number;
+  /** 通報数の多いレビュー (上位 limit) */
+  topReported: Array<ReviewRecord & { reportCount: number }>;
+  /** 直近 days 日の日次投稿数 (未来・当日を含むゼロ埋め) */
+  trend: Array<{ day: string; count: number }>;
+  /** 公開レビューの多いアイテム TOP */
+  topItems: Array<{ itemId: number; count: number }>;
+  /** DB のサイズ */
+  dbSizeBytes: number | null;
+  /** テーブル別サイズ (未作成テーブルは含まれない) */
+  tableSizes: Array<{ table: string; bytes: number }>;
+};
+
+export type BackupFile = { file: string; bytes: number; modifiedAt: string };
+
+export type AdminStats = AdminStatsData & {
+  /** ディスク使用状況 (取得できない環境では null) */
+  disk: { totalBytes: number; freeBytes: number } | null;
+  /** バックアップディレクトリの一覧 */
+  backups: BackupFile[];
 };

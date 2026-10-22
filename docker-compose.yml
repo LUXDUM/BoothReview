@@ -15,6 +15,9 @@ services:
     environment:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    # 管理ダッシュボードでバックアップ一覧を表示するための read-only マウント
+    volumes:
+      - ./backups:/backups:ro
     ports:
       # ホスト側のみ `${API_PORT}` に露出 (127.0.0.1 bind)。コンテナ内は固定 8080。
       # 例: 宿マシンの 8080 が他サービス (MagicMirror 等) で使用中なら API_PORT=18080 を .env に。

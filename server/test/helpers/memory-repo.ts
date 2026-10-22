@@ -156,14 +156,26 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       return true;
     },
 
-    async adminListReviews({ status, itemId, page, perPage }) {
+    async adminListReviews({ status, itemId, query, order, page, perPage }) {
       const filtered = db.reviews
         .filter(
           (r) =>
             (status === undefined || r.status === status) &&
-            (itemId === undefined || r.itemId === itemId),
+            (itemId === undefined || r.itemId === itemId) &&
+            (query === undefined ||
+              query === "" ||
+              r.body.toLowerCase().includes(query.toLowerCase())),
         )
-        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        .sort((a, b) => {
+          if (order === "reports") {
+            return (
+              db.reports.filter((rep) => rep.reviewId === b.id).length -
+                db.reports.filter((rep) => rep.reviewId === a.id).length ||
+              b.id - a.id
+            );
+          }
+          return b.createdAt.getTime() - a.createdAt.getTime();
+        });
       return {
         items: filtered
           .slice((page - 1) * perPage, page * perPage)
@@ -172,6 +184,61 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
             reportCount: db.reports.filter((rep) => rep.reviewId === r.id).length,
           })),
         total: filtered.length,
+      };
+    },
+
+    async adminStats() {
+      const counts = { total: db.reviews.length, published: 0, hidden: 0, deleted: 0 };
+      for (const r of db.reviews) counts[r.status] += 1;
+
+      const published = db.reviews.filter((r) => r.status === "published");
+      const ratingDistribution = [0, 0, 0, 0, 0];
+      let ratingSum = 0;
+      for (const r of published) {
+        ratingDistribution[r.rating - 1] += 1;
+        ratingSum += r.rating;
+      }
+      const avgRating = published.length > 0 ? ratingSum / published.length : null;
+
+      const reportTotal = db.reports.length;
+      const topReported = db.reviews
+        .map((r) => ({
+          ...clone(r),
+          reportCount: db.reports.filter((rep) => rep.reviewId === r.id).length,
+        }))
+        .filter((r) => r.reportCount > 0)
+        .sort((a, b) => b.reportCount - a.reportCount || b.id - a.id)
+        .slice(0, 10);
+
+      // 直近30日の日次投稿数 (ローカル日付の UTC 文字列でゼロ埋め)
+      const trend: Array<{ day: string; count: number }> = [];
+      const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+      const today = new Date();
+      for (let i = 29; i >= 0; i--) {
+        const day = new Date(today);
+        day.setUTCDate(day.getUTCDate() - i);
+        const key = dayKey(day);
+        trend.push({ day: key, count: db.reviews.filter((r) => dayKey(r.createdAt) === key).length });
+      }
+
+      const byItem = new Map<number, number>();
+      for (const r of published) byItem.set(r.itemId, (byItem.get(r.itemId) ?? 0) + 1);
+      const topItems = [...byItem.entries()]
+        .map(([itemId, count]) => ({ itemId, count }))
+        .sort((a, b) => b.count - a.count || b.itemId - a.itemId)
+        .slice(0, 10);
+
+      // DB 実装の深揗ディスク容量はこちらでは取得できないため null 固定
+      return {
+        counts,
+        avgRating,
+        ratingDistribution,
+        reportTotal,
+        topReported,
+        trend,
+        topItems,
+        dbSizeBytes: null,
+        tableSizes: [],
       };
     },
   };

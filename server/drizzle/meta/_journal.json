@@ -15,6 +15,13 @@
       "when": 1792675700000,
       "tag": "0001_review_checks_and_stats_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792692800537,
+      "tag": "0002_robust_jocasta",
+      "breakpoints": true
     }
   ]
 }

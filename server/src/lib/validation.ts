@@ -72,3 +72,14 @@ export function createPerPageSchema(config: {
 }
 
 export const adminStatusSchema = z.enum(["published", "hidden", "deleted"]);
+
+/**
+ * BOOTH ショップのサブドメイン (例: nico25.booth.pm → "nico25")。
+ * 投稿時にURLから採取してレビューに付与し、ショップページでの集計に使う。
+ */
+export const shopSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9][a-z0-9-]{0,62}$/,
+    "shop must be a BOOTH subdomain (lowercase alnum and hyphens)",
+  );

@@ -47,9 +47,88 @@ export function findMountAnchor(doc: Document): Element | null {
   return null;
 }
 
+// ---- ショップページ (例: https://nico25.booth.pm/) ----
+
+/**
+ * BOOTH ショップのサブドメインを抽出する (例: nico25.booth.pm → "nico25")。
+ * www.booth.pm はショップではない。アイテムページでもサブドメインはショップ名なので
+ * 投稿時の紐付け (POST /items/:id/reviews の shop) にそのまま使える。
+ */
+export function extractShopFromUrl(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  if (!u.hostname.endsWith("booth.pm")) return null;
+  const suffix = ".booth.pm";
+  const sub = u.hostname.slice(0, -suffix.length);
+  if (!sub || sub.includes(".") || sub === "www") return null;
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(sub)) return null;
+  return sub;
+}
+
+/** ショップトップページ判定 (/items/ を含まないショップサブドメインのページ) */
+export function isShopPage(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  return extractShopFromUrl(url) !== null && !ITEM_PATH_RE.test(u.pathname);
+}
+
+/**
+ * ショップページでレビュー一覧を差し込む「境界」アンカー。
+ * 挿入は attachPanelHost の「anchor の直前」に行われる。
+ * - できれば「フォロー中ショップの提案」ブロックの前
+ * - 見つからなければ shop フッターの直前 (= ページ最下部)
+ */
+const SHOP_MOUNT_ANCHOR_SELECTORS: readonly string[] = [
+  ".js-recommend-shops",
+  "#js-recommend-shops",
+  ".shop-follow-section",
+  // フォールバック: BOOTH ショップページのフッター (実機確認済みの安定要素)
+  "#shop_default .page-wrap footer",
+  "footer",
+];
+
+export function findShopMountAnchor(doc: Document): Element | null {
+  for (const sel of SHOP_MOUNT_ANCHOR_SELECTORS) {
+    const el = doc.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
+/**
+ * 「全体評価 ☆バッジ」を置く一番上のアンカー。
+ * メインコンテンツ (商品一覧) の直前 = ショップヘッダー (名前等) の直下に来る。
+ */
+const SHOP_BADGE_ANCHOR_SELECTORS: readonly string[] = [
+  "#shop_default .page-wrap .layout-wrap main",
+  "#shop_default main",
+];
+
+export function findShopBadgeAnchor(doc: Document): Element | null {
+  for (const sel of SHOP_BADGE_ANCHOR_SELECTORS) {
+    const el = doc.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
 /** Magic DOM 中へ挿入するパネルホスト要素を作る */
 export function createPanelHostId(): string {
   return "boothreview-panel-host";
+}
+
+/** ショップページの「全体評価 ☆バッジ」用ホストID */
+export function createBadgeHostId(): string {
+  return "boothreview-badge-host";
 }
 
 const PANEL_HOST_ID_STYLES = {
@@ -64,6 +143,25 @@ export function attachPanelHost(doc: Document, anchor: Element): HTMLElement {
     host = doc.createElement("div");
     host.id = hostId;
     // BOOTH 側 CSS の干渉を避けるため inline で最小限のスタイルのみ
+    for (const [prop, value] of Object.entries(PANEL_HOST_ID_STYLES)) {
+      host.style.setProperty(propToKebab(prop), value);
+    }
+    if (anchor.parentElement) {
+      anchor.parentElement.insertBefore(host, anchor);
+    } else {
+      doc.body.appendChild(host);
+    }
+  }
+  return host;
+}
+
+/** ショップページの☆バッジ用ホスト (パネルホストと別にする。バッジは先に消えないよう常設) */
+export function attachBadgeHost(doc: Document, anchor: Element): HTMLElement {
+  const hostId = createBadgeHostId();
+  let host = doc.getElementById(hostId);
+  if (!host) {
+    host = doc.createElement("div");
+    host.id = hostId;
     for (const [prop, value] of Object.entries(PANEL_HOST_ID_STYLES)) {
       host.style.setProperty(propToKebab(prop), value);
     }

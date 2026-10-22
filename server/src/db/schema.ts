@@ -22,6 +22,8 @@ export const reviews = pgTable(
   {
     id: bigserial("id", { mode: "number" }).primaryKey(),
     itemId: bigint("item_id", { mode: "number" }).notNull(),
+    /** 投稿元URLから採取したショップのサブドメイン (旧データは null) */
+    shop: text("shop"),
     authorHash: char("author_hash", { length: 64 }).notNull(),
     rating: smallint("rating").notNull(),
     body: text("body").notNull(),
@@ -33,6 +35,8 @@ export const reviews = pgTable(
   (t) => [
     uniqueIndex("reviews_item_author_uq").on(t.itemId, t.authorHash),
     index("reviews_list_idx").on(t.itemId, t.status, t.createdAt),
+    // ショップページ集計用 (投稿時にURLから採取したサブドメイン)。null は旧データ
+    index("reviews_shop_list_idx").on(t.shop, t.status, t.createdAt),
   ],
 );
 

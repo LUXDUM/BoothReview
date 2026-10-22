@@ -12,6 +12,7 @@ import type {
 type Row = {
   id: number;
   itemId: number;
+  shop: string | null;
   authorHash: string;
   rating: number;
   body: string;
@@ -38,7 +39,6 @@ function clone(r: Row): ReviewRecord {
     updatedAt: new Date(r.updatedAt),
   };
 }
-
 export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewRepository {
   const db: MemoryDb = { reviews: [], reports: [], ...seed };
   let nextReviewId = db.reviews.reduce((m, r) => Math.max(m, r.id), 0) + 1;
@@ -69,6 +69,26 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       };
     },
 
+    async getShopSummary(shop) {
+      const published = db.reviews.filter(
+        (r) => r.shop === shop && r.status === "published",
+      );
+      return {
+        reviewCount: published.length,
+        ratingSum: published.reduce((s, r) => s + r.rating, 0),
+      };
+    },
+
+    async listShopReviews(shop, page, perPage) {
+      const published = db.reviews
+        .filter((r) => r.shop === shop && r.status === "published")
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+      return {
+        items: published.slice((page - 1) * perPage, page * perPage).map(clone),
+        total: published.length,
+      };
+    },
+
     async findReviewByAuthor(itemId, authorHashHex) {
       const row = db.reviews.find(
         (r) => r.itemId === itemId && r.authorHash === authorHashHex,
@@ -85,12 +105,14 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       if (existing) {
         existing.rating = input.rating;
         existing.body = input.body;
+        if (input.shop !== undefined) existing.shop = input.shop;
         existing.updatedAt = now;
         return { review: clone(existing), created: false };
       }
       const row: Row = {
         id: nextReviewId++,
         itemId: input.itemId,
+        shop: input.shop ?? null,
         authorHash: input.authorHashHex,
         rating: input.rating,
         body: input.body,
@@ -116,6 +138,7 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       }
       if (patch.rating !== undefined) row.rating = patch.rating;
       if (patch.body !== undefined) row.body = patch.body;
+      if (patch.shop !== undefined) row.shop = patch.shop;
       row.updatedAt = new Date();
       return { found: true, owned: true, review: clone(row) };
     },

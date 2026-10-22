@@ -34,6 +34,16 @@ export type ReviewRepository = {
   /** 公開中レビューの集計 (集計テーブルから O(1) で読む) */
   getSummary(itemId: number): Promise<Summary>;
 
+  /** ショップ集計: そのショップのサブドメインが付いた公開レビューのみ */
+  getShopSummary(shop: string): Promise<Summary>;
+
+  /** ショップ集計: 公開レビュー一覧 (作成日時の新しい順) */
+  listShopReviews(
+    shop: string,
+    page: number,
+    perPage: number,
+  ): Promise<{ items: ReviewRecord[]; total: number }>;
+
   /** 自分のレビュー (同一匿名ID = author_hash)。公開/非公開どちらも対象 */
   findReviewByAuthor(itemId: number, authorHashHex: string): Promise<ReviewRecord | null>;
 
@@ -46,6 +56,8 @@ export type ReviewRepository = {
     authorHashHex: string;
     rating: number;
     body: string;
+    /** 投稿元のショップサブドメイン (指定時のみ更新)。ショップ集計に使用 */
+    shop?: string | undefined;
   }): Promise<{ review: ReviewRecord; created: boolean }>;
 
   getReview(id: number): Promise<ReviewRecord | null>;
@@ -53,7 +65,7 @@ export type ReviewRepository = {
   updateOwnReview(
     id: number,
     authorHashHex: string,
-    patch: { rating?: number | undefined; body?: string | undefined },
+    patch: { rating?: number | undefined; body?: string | undefined; shop?: string | undefined },
   ): Promise<OwnLookup>;
 
   deleteOwnReview(id: number, authorHashHex: string): Promise<{ found: boolean; owned: boolean }>;

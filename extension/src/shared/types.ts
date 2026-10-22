@@ -2,6 +2,8 @@
 
 export type ApiReview = {
   id: number;
+  /** ショップ集計 (/v1/shops/:shop/reviews) の一覧でのみ付く */
+  itemId?: number;
   rating: number;
   body: string;
   createdAt: string;

@@ -86,11 +86,12 @@ Response `200`:
 
 Body:
 ```json
-{ "rating": 1..5(整数), "body": "プレーンテキスト", "anonId": "UUID" }
+{ "rating": 1..5(整数), "body": "プレーンテキスト", "anonId": "UUID", "shop": "nico25" }
 ```
 
 - `body`: 制御文字/ゼロ幅文字を除去した後、`MIN_BODY_LEN`(初期10)〜 `MAX_BODY_LEN`(初期2000)文字
 - `rating`: 1〜5 の整数
+- `shop`: 任意。投稿元URLのショップサブドメイン (BOOTH ショップ集計用)。省略時は既存値を変更しない
 
 注意: 事実上 status は変更しない(管理者/通報により非表示にされたレビューは投稿で復活しない)。
 
@@ -100,8 +101,9 @@ Body:
 
 Body (どちらか最低1項目)：
 ```json
-{ "rating": 3?, "body": "..."? }
+{ "rating": 3?, "body": "..."?, "shop": "nico25"? }
 ```
+- `shop`: 任意。旧レビューをショップ集計に紐付ける場合などに付与する (省略時は変更しない)
 
 Response `{ "review": { ... } }`
 
@@ -171,6 +173,25 @@ Response: 更新後のレビュー(通報数を含む)。
 管理ダッシュボードの HTML (ブラウザで開く)。このページ自体はデータを含まず、
 ページ内で `ADMIN_TOKEN` を入力すると `GET /v1/admin/stats` を Bearer 認証付きで呼び出して描画する。
 トークンは sessionStorage に保持され、タブを閉じると消える。
+
+### GET `/v1/shops/:shop/summary`
+
+ショップ集計 (例: `/v1/shops/nico25/summary`)。投稿時に URL から採取したサブドメイン付きの公開レビューのみ対象。
+
+```json
+{ "count": 2, "average": 4 }
+```
+
+> 旧データ (投稿時に shop を記録していないレビュー) は商品ページのみで扱い、ショップ集計には含まれない。
+
+### GET `/v1/shops/:shop/reviews`
+
+ショップの公開レビュー一覧。`page` / `perPage` に対応。item 側の一覧と異なり、各レビューに元商品へのリンク用 `itemId` が付く。
+
+```json
+{ "reviews": [{ "id": 5, "itemId": 9955501, "rating": 4, "body": "...", "createdAt": "..." }],
+  "page": 1, "perPage": 10, "total": 1, "totalPages": 1 }
+```
 
 ---
 

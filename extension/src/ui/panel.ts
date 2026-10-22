@@ -17,10 +17,17 @@ type MountDeps = {
   shadowRoot: ShadowRoot;
   itemId: number;
   getAnonId(): Promise<string>;
+  /** ショップページモード。itemId は無視され、ショップ集計 API を使う */
+  mode?: "item" | "shop";
+  /** ショップモードでの対象ショップ (BOOTH のサブドメイン) */
+  shop?: string | null;
+  /** 投稿・編集時に現在URLのショップ紐付けを付けるためのコールバック */
+  getShop?: () => string | null;
 };
 
 export function mountPanel(deps: MountDeps): PanelHandle {
-  const { shadowRoot, itemId, getAnonId } = deps;
+  const { shadowRoot, itemId, getAnonId, mode = "item", shop = null, getShop } = deps;
+  const isShop = mode === "shop" && shop !== null;
 
   let page = 1;
   let totalPages = 1;
@@ -57,10 +64,14 @@ export function mountPanel(deps: MountDeps): PanelHandle {
   const formArea = el("div", "br-form");
   const statusArea = el("div", "br-status");
 
-  root.append(summaryLine, list, moreWrap, formArea, statusArea);
+  if (isShop) {
+    // ショップページでは「どの商品へのレビューか」が文脈としてないため投稿フォームは出さない
+    root.append(summaryLine, list, moreWrap, statusArea);
+  } else {
+    root.append(summaryLine, list, moreWrap, formArea, statusArea);
+    renderForm();
+  }
   shadowRoot.append(styleNode, root);
-
-  renderForm();
 
   function setStatus(message: string, isError = false): void {
     statusArea.replaceChildren(el("div", isError ? "br-status br-error" : "br-status", message));
@@ -83,14 +94,8 @@ export function mountPanel(deps: MountDeps): PanelHandle {
 
   // ---- list / summary ----
 
-  function renderReviewItem(review: ApiReview): HTMLLIElement {
-    const li = el("li", "br-item") as HTMLLIElement;
-    const head = el("div", "br-item-head");
-    head.append(el("span", "br-stars", stars(review.rating)));
-    head.append(el("time", "br-date", formatDate(review.createdAt)));
-    // 本文は textContent のみ (innerHTML は使わない)
-    const body = el("div", "br-body", review.body);
-    const foot = el("div", "br-item-foot");
+  /** 通報ボタンを作る共通ヘルパー */
+  function createReportButton(review: ApiReview): HTMLButtonElement {
     const reportBtn = btn("br-link", "通報");
     reportBtn.addEventListener("click", async () => {
       if (!confirm("このレビューを通報しますか?")) return;
@@ -103,7 +108,30 @@ export function mountPanel(deps: MountDeps): PanelHandle {
         setStatus(asMessage(e), true);
       }
     });
-    foot.append(reportBtn);
+    return reportBtn;
+  }
+
+  function renderReviewItem(review: ApiReview): HTMLLIElement {
+    const li = el("li", "br-item") as HTMLLIElement;
+    const head = el("div", "br-item-head");
+    head.append(el("span", "br-stars", stars(review.rating)));
+    head.append(el("time", "br-date", formatDate(review.createdAt)));
+    // 本文は textContent のみ (innerHTML は使わない)
+    const body = el("div", "br-body", review.body);
+    const foot = el("div", "br-item-foot");
+    if (isShop && shop && review.itemId !== undefined) {
+      // ショップ一覧では元商品へのリンクを付ける
+      const link = document.createElement("a");
+      link.className = "br-item-link";
+      link.href = `https://${shop}.booth.pm/items/${review.itemId}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "商品ページへ ↗";
+      foot.append(link, createReportButton(review));
+      li.append(head, body, foot);
+      return li;
+    }
+    foot.append(createReportButton(review));
     li.append(head, body, foot);
     return li;
   }
@@ -122,11 +150,11 @@ export function mountPanel(deps: MountDeps): PanelHandle {
     if (opts?.resetPage) page = 1;
 
     const [mineRes, summaryRes] = await Promise.all([
-      opts?.reloadMine === false ? Promise.resolve(null) : loadMine(),
-      api.summary(itemId),
+      isShop ? Promise.resolve(null) : (opts?.reloadMine === false ? Promise.resolve(null) : loadMine()),
+      isShop ? api.shopSummary(shop as string) : api.summary(itemId),
     ]);
     if (mineRes) mine = mineRes.ok ? mineRes.data.review : null;
-    renderForm();
+    if (!isShop) renderForm();
 
     if (!summaryRes.ok) {
       summaryLine.textContent = errorMessage(summaryRes);
@@ -135,10 +163,12 @@ export function mountPanel(deps: MountDeps): PanelHandle {
     const { count, average } = summaryRes.data;
     summaryLine.textContent =
       count === 0
-        ? "まだレビューがありません。最初のレビューを書いてみませんか?"
+        ? "まだレビューがありません。商品ページから最初のレビューを書いてみませんか?"
         : `★ ${average ?? "-"} (${count}件のレビュー)`;
 
-    const listRes = await api.list(itemId, page);
+    const listRes = isShop
+      ? await api.shopList(shop as string, page)
+      : await api.list(itemId, page);
     if (!listRes.ok) {
       setStatus(errorMessage(listRes), true);
       return;
@@ -267,11 +297,11 @@ export function mountPanel(deps: MountDeps): PanelHandle {
       try {
         const anonId = await getAnonId();
         if (editing && mine) {
-          const res = await api.patch(mine.id, { rating: selectedRating, body }, anonId);
+          const res = await api.patch(mine.id, { rating: selectedRating, body }, anonId, getShop?.() ?? null);
           editing = false;
           handleMutation(res, "レビューを更新しました");
         } else {
-          const res = await api.post(itemId, selectedRating, body, anonId);
+          const res = await api.post(itemId, selectedRating, body, anonId, getShop?.() ?? null);
           handleMutation(res, mine ? "レビューを更新しました" : "レビューを投稿しました");
         }
       } catch (e) {
@@ -377,4 +407,67 @@ const PANEL_CSS = `
   .br-status { min-height: 18px; margin-top: 4px; }
   .br-status.br-error { color: #b3261e; }
   .br-link { background: none; border: none; color: #0074c8; cursor: pointer; padding: 2px 4px; font: inherit; font-size: 13px; }
+  .br-item-link { color: #0074c8; font-size: 12px; text-decoration: none; }
+  .br-item-link:hover { text-decoration: underline; }
+`;
+
+export type BadgeHandle = { destroy(): void };
+
+/**
+ * ショップページ最上部の「全体評価 ☆バッジ」。
+ * 押すとページ下部のレビュー一覧までスクロールする。
+ */
+export function mountShopBadge(deps: { shadowRoot: ShadowRoot; shop: string }): BadgeHandle {
+  const { shadowRoot, shop } = deps;
+
+  shadowRoot.innerHTML = "";
+  const style = document.createElement("style");
+  style.textContent = BADGE_CSS;
+  const badge = document.createElement("button");
+  badge.type = "button";
+  badge.className = "brb-root";
+  badge.textContent = "☆ 読み込み中…";
+  badge.setAttribute("aria-label", "ショップ全体の評価へ移動");
+  shadowRoot.append(style, badge);
+
+  void (async () => {
+    const res = await api.shopSummary(shop);
+    if (!res.ok) {
+      badge.textContent = "☆ レビュー";
+      return;
+    }
+    const { count, average } = res.data;
+    badge.textContent = count === 0 ? "☆ レビューなし" : `★ ${average ?? "-"} (${count}件)`;
+  })();
+
+  badge.addEventListener("click", () => {
+    const panel = document.getElementById("boothreview-panel-host");
+    panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  return {
+    destroy(): void {
+      const host = shadowRoot.host;
+      if (host.isConnected && host.id === "boothreview-badge-host") {
+        host.remove();
+      }
+    },
+  };
+}
+
+const BADGE_CSS = `
+  .brb-root {
+    all: initial;
+    display: inline-block;
+    cursor: pointer;
+    border: 1px solid #e0a013;
+    color: #8a5b00;
+    background: #fff8e6;
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 6px 0;
+  }
 `;

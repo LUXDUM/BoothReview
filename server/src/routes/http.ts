@@ -16,6 +16,7 @@ import {
   itemIdSchema,
   pageSchema,
   ratingSchema,
+  shopSchema,
 } from "../lib/validation.js";
 import { authorHash } from "../lib/hash.js";
 import { extractClientIp } from "../lib/ip.js";
@@ -294,6 +295,43 @@ export function createApp(deps: AppDeps): Hono {
     return c.json(payload);
   });
 
+  // --- ショップ集計 (投稿時に記録したサブドメイン単位) ---
+
+  app.get("/v1/shops/:shop/summary", async (c) => {
+    limitOrThrow(ipBucketKey("list", c), config.rateLimits.listPerIpPerMinute, MINUTE_MS);
+    const shop = parseWith(shopSchema, asReq(c).req.param("shop"));
+    const { reviewCount, ratingSum } = await repo.getShopSummary(shop);
+    const payload = {
+      count: reviewCount,
+      average: reviewCount === 0 ? null : Number((ratingSum / reviewCount).toFixed(2)),
+    };
+    const json = JSON.stringify(payload);
+    if (setCacheHeaders(c, json)) return c.body(null, 304);
+    return c.json(payload);
+  });
+
+  app.get("/v1/shops/:shop/reviews", async (c) => {
+    limitOrThrow(ipBucketKey("list", c), config.rateLimits.listPerIpPerMinute, MINUTE_MS);
+    const shop = parseWith(shopSchema, asReq(c).req.param("shop"));
+    const page = parseWith(pageSchema, asReq(c).req.query("page") ?? "1");
+    const perPage = parseWith(
+      perPageSchema,
+      asReq(c).req.query("perPage") ?? String(config.perPageDefault),
+    );
+    const { items, total } = await repo.listShopReviews(shop, page, perPage);
+    const payload = {
+      // ショップ一覧では元商品へのリンクのために itemId を追加する
+      reviews: items.map((r) => ({ ...toPublic(r), itemId: r.itemId })),
+      page,
+      perPage,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / perPage)),
+    };
+    const json = JSON.stringify(payload);
+    if (setCacheHeaders(c, json)) return c.body(null, 304);
+    return c.json(payload);
+  });
+
   app.get("/v1/items/:itemId/mine", async (c) => {
     limitOrThrow(
       ipBucketKey("mine", c),
@@ -315,7 +353,13 @@ export function createApp(deps: AppDeps): Hono {
       HOUR_MS,
     );
     const input = parseWith(
-      z.object({ rating: ratingSchema, body: bodySchema, anonId: anonIdSchema }),
+      z.object({
+        rating: ratingSchema,
+        body: bodySchema,
+        anonId: anonIdSchema,
+        /** 投稿元URLから採取したショップのサブドメイン (省略可) */
+        shop: shopSchema.optional(),
+      }),
       await readJson(c),
     );
     const hash = authorHash(config.pepper, input.anonId);
@@ -330,6 +374,7 @@ export function createApp(deps: AppDeps): Hono {
       authorHashHex: hash,
       rating: input.rating,
       body: input.body,
+      shop: input.shop,
     });
     return c.json({ review: toPublic(review), created }, created ? 201 : 200);
   });
@@ -340,16 +385,22 @@ export function createApp(deps: AppDeps): Hono {
     const hash = authorHash(config.pepper, anonId);
     const input = parseWith(
       z
-        .object({ rating: ratingSchema.optional(), body: bodySchema.optional() })
+        .object({
+          rating: ratingSchema.optional(),
+          body: bodySchema.optional(),
+          /** 編集時にショップ紐付けを追加 / 更新する場合に使用 (省略時は変更しない) */
+          shop: shopSchema.optional(),
+        })
         .refine(
-          (v) => v.rating !== undefined || v.body !== undefined,
-          { message: "at least one of rating or body is required" },
+          (v) => v.rating !== undefined || v.body !== undefined || v.shop !== undefined,
+          { message: "at least one of rating, body or shop is required" },
         ),
       await readJson(c),
     );
     const res = await repo.updateOwnReview(id, hash, {
       rating: input.rating,
       body: input.body,
+      shop: input.shop,
     });
     if (!res.found) throw Errors.notFound();
     if (!res.owned) throw Errors.forbidden();

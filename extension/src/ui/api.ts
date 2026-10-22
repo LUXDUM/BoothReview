@@ -146,18 +146,31 @@ export const api = {
   mine(itemId: number, anonId: string): Promise<MineResult> {
     return apiCall<ApiMineResponse>("GET", `/v1/items/${itemId}/mine`, { anonId });
   },
-  post(itemId: number, rating: number, body: string, anonId: string): Promise<MutationResult> {
+  shopSummary(shop: string): Promise<SummaryResult> {
+    return apiCall<ApiSummaryResponse>("GET", `/v1/shops/${shop}/summary`);
+  },
+  shopList(shop: string, page: number): Promise<ReviewListResult> {
+    return apiCall<ApiReviewsResponse>("GET", `/v1/shops/${shop}/reviews?page=${page}`);
+  },
+  post(
+    itemId: number,
+    rating: number,
+    body: string,
+    anonId: string,
+    shop?: string | null,
+  ): Promise<MutationResult> {
     return apiCall("POST", `/v1/items/${itemId}/reviews`, {
-      body: { rating, body, anonId },
+      body: { rating, body, anonId, ...(shop ? { shop } : {}) },
     });
   },
   patch(
     reviewId: number,
     patch: { rating?: number; body?: string },
     anonId: string,
+    shop?: string | null,
   ): Promise<MutationResult> {
     return apiCall("PATCH", `/v1/reviews/${reviewId}`, {
-      body: patch,
+      body: { ...patch, ...(shop ? { shop } : {}) },
       anonId,
     });
   },

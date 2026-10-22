@@ -1,14 +1,25 @@
-import { extractItemIdFromUrl, findMountAnchor, attachPanelHost } from "../src/core/booth-dom";
+import {
+  extractItemIdFromUrl,
+  extractShopFromUrl,
+  findMountAnchor,
+  findShopBadgeAnchor,
+  findShopMountAnchor,
+  attachPanelHost,
+  attachBadgeHost,
+  isShopPage,
+} from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
-import { mountPanel, type PanelHandle } from "../src/ui/panel";
+import { mountPanel, mountShopBadge, type PanelHandle } from "../src/ui/panel";
 import { API_ORIGIN } from "../src/shared/config";
 
 /**
- * BOOTH 商品ページにレビューパネルを差し込む content script。
+ * BOOTH 商品ページ / ショップページにレビューUIを差し込む content script。
  *
- * - 対象 URL は patterns で粗く受けて、商品ID抽出 (core/booth-dom.ts) で厳密に判定する
- * - BOOTH は SPA 遷移 (URLだけ変わる/要素だけ再描画される) の可能性があるため
- *   MutationObserver + ポーリングで URL 変化とパネル有無を監視する
+ * - 対象 URL は patterns で粗く受けて、商品ID・ショップ抽出 (core/booth-dom.ts) で厳密に判定する
+ * - 商品ページ: 従来どおりパネル (一覧 + 投稿フォーム) を差し込む
+ * - ショップページ: 最上部に「全体評価 ☆バッジ」(押すと最下までスクロール)、
+ *   最下部にレビュー一覧 (通報のみ・投稿は商品ページから) を差し込む
+ * - BOOTH は SPA 遷移の可能性があるため MutationObserver + ポーリングで監視する
  */
 
 declare const defineContentScript: (args: {
@@ -22,10 +33,12 @@ export default defineContentScript({
   runAt: "document_idle",
   main: () => {
     console.info("[BoothReview] content script loaded, API:", API_ORIGIN);
-    let mountedItemId: number | null = null;
+    /** 現在マウント中の対象 ("items:123" / "shop:sub") */
+    let mountedTarget: string | null = null;
     let panel: PanelHandle | null = null;
+    let badge: PanelHandle | null = null;
 
-    function mount(itemId: number): void {
+    function mountItem(itemId: number): void {
       const anchor = findMountAnchor(document);
       if (!anchor) return; // BOOTH 側 DOM の読み込み待ち (observer が再試行する)
       const host = attachPanelHost(document, anchor);
@@ -35,34 +48,84 @@ export default defineContentScript({
         shadowRoot,
         itemId,
         getAnonId: () => getOrCreateAnonId(),
+        getShop: () => extractShopFromUrl(location.href),
       });
-      mountedItemId = itemId;
+      mountedTarget = `items:${itemId}`;
+    }
+
+    function mountShop(shop: string): void {
+      // ☆バッジ (押すと下までスクロール)
+      const badgeAnchor = findShopBadgeAnchor(document);
+      if (badgeAnchor) {
+        const badgeHost = attachBadgeHost(document, badgeAnchor);
+        const badgeRoot = badgeHost.shadowRoot ?? badgeHost.attachShadow({ mode: "open" });
+        badge = mountShopBadge({ shadowRoot: badgeRoot, shop });
+      }
+      // レビュー一覧 (投稿は商品ページから)
+      const anchor = findShopMountAnchor(document);
+      if (!anchor) return; // アンカー未検出 → observer/ポーリングが再試行する (mountedTarget は未設定)
+      const host = attachPanelHost(document, anchor);
+      const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+      panel = mountPanel({
+        shadowRoot,
+        itemId: 0,
+        getAnonId: () => getOrCreateAnonId(),
+        mode: "shop",
+        shop,
+      });
+      mountedTarget = `shop:${shop}`;
     }
 
     function unmount(): void {
       panel?.destroy();
       panel = null;
-      mountedItemId = null;
+      badge?.destroy();
+      badge = null;
+      mountedTarget = null;
     }
 
     function sync(): void {
       const itemId = extractItemIdFromUrl(location.href);
-      if (itemId === null) {
-        if (mountedItemId !== null) unmount();
-        return;
-      }
-      if (itemId === mountedItemId) {
-        // パネルが BOOTH 側の再描画で消された場合は付け直す
-        const host = document.getElementById("boothreview-panel-host");
-        if (!host) {
-          panel?.destroy();
-          panel = null;
-          mount(itemId);
+      if (itemId !== null) {
+        const want = `items:${itemId}`;
+        if (want === mountedTarget) {
+          // パネルが BOOTH 側の再描画で消された場合は付け直す
+          if (!document.getElementById("boothreview-panel-host")) {
+            panel?.destroy();
+            panel = null;
+            mountItem(itemId);
+          }
+          return;
         }
+        unmount();
+        mountItem(itemId);
         return;
       }
-      unmount();
-      mount(itemId);
+
+      // ショップページ (サブドメインあり & /items/ 無し)
+      if (isShopPage(location.href)) {
+        const shop = extractShopFromUrl(location.href) as string;
+        const want = `shop:${shop}`;
+        if (want === mountedTarget) {
+          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す
+          if (
+            !document.getElementById("boothreview-panel-host") ||
+            !document.getElementById("boothreview-badge-host")
+          ) {
+            panel?.destroy();
+            panel = null;
+            badge?.destroy();
+            badge = null;
+            mountShop(shop);
+          }
+          return;
+        }
+        unmount();
+        mountShop(shop);
+        return;
+      }
+
+      if (mountedTarget !== null) unmount();
     }
 
     sync();

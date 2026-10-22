@@ -78,6 +78,32 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       return { reviewCount: row.reviewCount, ratingSum: row.ratingSum };
     },
 
+    async getShopSummary(shop): Promise<Summary> {
+      const rows = await db
+        .select({ reviewsCount: count(), ratingSum: sql`COALESCE(SUM(${reviews.rating}), 0)` })
+        .from(reviews)
+        .where(and(eq(reviews.shop, shop), eq(reviews.status, "published")));
+      const row = rows[0];
+      if (!row) return { reviewCount: 0, ratingSum: 0 };
+      return { reviewCount: Number(row.reviewsCount), ratingSum: Number(row.ratingSum) };
+    },
+
+    async listShopReviews(shop, page, perPage) {
+      const where = and(eq(reviews.shop, shop), eq(reviews.status, "published"));
+      const rows = await db
+        .select()
+        .from(reviews)
+        .where(where)
+        .orderBy(desc(reviews.createdAt), desc(reviews.id))
+        .limit(perPage)
+        .offset((page - 1) * perPage);
+      const totalRows = await db.select({ total: count() }).from(reviews).where(where);
+      return {
+        items: rows.map((r) => toRecord(r)!),
+        total: Number(totalRows[0]?.total ?? 0),
+      };
+    },
+
     async findReviewByAuthor(itemId, authorHashHex) {
       const rows = await db
         .select()
@@ -87,13 +113,19 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       return toRecord(rows[0]);
     },
 
-    async upsertReview({ itemId, authorHashHex, rating, body }) {
+    async upsertReview({ itemId, authorHashHex, rating, body, shop }) {
       // 更新/新規どちらかを返すため、まず既存を探す (レース時は後段で仕上げる)
       const existing = await this.findReviewByAuthor(itemId, authorHashHex);
       if (existing) {
         const updated = await db
           .update(reviews)
-          .set({ rating, body, updatedAt: new Date() })
+          .set({
+            rating,
+            body,
+            updatedAt: new Date(),
+            // ショップは指定があったときだけ更新 (旧データの紐付けを消さない)
+            ...(shop !== undefined ? { shop } : {}),
+          })
           .where(eq(reviews.id, existing.id))
           .returning();
         return { review: toRecord(updated[0])!, created: false };
@@ -101,7 +133,7 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       try {
         const inserted = await db
           .insert(reviews)
-          .values({ itemId, authorHash: authorHashHex, rating, body })
+          .values({ itemId, authorHash: authorHashHex, rating, body, ...(shop !== undefined ? { shop } : {}) })
           .returning();
         return { review: toRecord(inserted[0])!, created: true };
       } catch (e) {
@@ -111,7 +143,12 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           if (again) {
             const updated = await db
               .update(reviews)
-              .set({ rating, body, updatedAt: new Date() })
+              .set({
+                rating,
+                body,
+                updatedAt: new Date(),
+                ...(shop !== undefined ? { shop } : {}),
+              })
               .where(eq(reviews.id, again.id))
               .returning();
             return { review: toRecord(updated[0])!, created: false };
@@ -134,11 +171,12 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       if (row && row.authorHash !== authorHashHex) {
         return { found: true, owned: false, review: null };
       }
-      const set: { rating?: number; body?: string; updatedAt: Date } = {
+      const set: { rating?: number; body?: string; shop?: string; updatedAt: Date } = {
         updatedAt: new Date(),
       };
       if (patch.rating !== undefined) set.rating = patch.rating;
       if (patch.body !== undefined) set.body = patch.body;
+      if (patch.shop !== undefined) set.shop = patch.shop;
       const updated = await db
         .update(reviews)
         .set(set)

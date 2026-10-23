@@ -20,6 +20,8 @@ import { api } from "./api";
  */
 
 const CHIP_ATTR = "data-br-rating-chip";
+/** 描画済み集計の比較用属性 (同値なら DOM を触らない → MutationObserver の自励発振を防ぐ) */
+const CHIP_RENDERED_ATTR = "data-br-rendered";
 /** キャッシュ溢れで古い ID が再取得される問題を避けるため、上限は広めに取る */
 const CACHE_LIMIT = 2000;
 const BATCH_SIZE = 50;
@@ -54,6 +56,12 @@ function cardTargetOf(anchor: Element): { card: HTMLElement; title: HTMLElement 
 function applyChip(card: HTMLElement, title: HTMLElement, summary: ChipSummary | undefined): void {
   const existing = title.previousElementSibling;
   if (existing instanceof HTMLElement && existing.hasAttribute(CHIP_ATTR)) {
+    // textContent を毎 tick 再構築すると MutationObserver の無限フィードバックになるので、
+    // 内容が変わった時 (ページ入渋時の当初 1 回) だけ更新する (メモリリーク対策)
+    const rendered = existing.getAttribute(CHIP_RENDERED_ATTR) ?? "";
+    const next = summary ? `${summary.count}|${summary.average ?? ""}` : "none";
+    if (rendered === next) return;
+    existing.setAttribute(CHIP_RENDERED_ATTR, next);
     updateChipText(existing, summary);
     return;
   }
@@ -64,6 +72,7 @@ function applyChip(card: HTMLElement, title: HTMLElement, summary: ChipSummary |
   const chip = document.createElement("div");
   chip.className = "booth-review-rating-chip";
   chip.setAttribute(CHIP_ATTR, "");
+  chip.setAttribute(CHIP_RENDERED_ATTR, summary ? `${summary.count}|${summary.average ?? ""}` : "none");
   updateChipText(chip, summary);
   title.insertAdjacentElement("beforebegin", chip);
 }

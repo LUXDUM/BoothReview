@@ -102,17 +102,19 @@ export default defineContentScript({
       if (itemId !== null) {
         const want = `items:${itemId}`;
         if (want === mountedTarget) {
-          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す
+          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す (連発防止の冷却あり)
           if (
             !document.getElementById("boothreview-panel-host") ||
             (findMountAnchor(document) !== null &&
               document.getElementById("boothreview-badge-host") === null)
           ) {
-            panel?.destroy();
-            panel = null;
-            badge?.destroy();
-            badge = null;
-            mountItem(itemId);
+            if (remountAllowed()) {
+              panel?.destroy();
+              panel = null;
+              badge?.destroy();
+              badge = null;
+              mountItem(itemId);
+            }
           }
           return;
         }
@@ -126,16 +128,18 @@ export default defineContentScript({
         const shop = extractShopFromUrl(location.href) as string;
         const want = `shop:${shop}`;
         if (want === mountedTarget) {
-          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す
+          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す (連発防止の冷却あり)
           if (
             !document.getElementById("boothreview-panel-host") ||
             !document.getElementById("boothreview-badge-host")
           ) {
-            panel?.destroy();
-            panel = null;
-            badge?.destroy();
-            badge = null;
-            mountShop(shop);
+            if (remountAllowed()) {
+              panel?.destroy();
+              panel = null;
+              badge?.destroy();
+              badge = null;
+              mountShop(shop);
+            }
           }
           return;
         }
@@ -147,12 +151,34 @@ export default defineContentScript({
       if (mountedTarget !== null) unmount();
     }
 
+    /** 再マウント・ループの自励発振を防ぐ: BOOTH 読込中に毎秒 destroy/rebuild しない */
+    const REMOUNT_COOLDOWN_MS = 3000;
+    let lastRemountAt = 0;
+    function remountAllowed(): boolean {
+      const now = Date.now();
+      if (now - lastRemountAt < REMOUNT_COOLDOWN_MS) return false;
+      lastRemountAt = now;
+      return true;
+    }
+
     sync();
 
-    // URL 変化・DOM 変化の監視
-    const observer = new MutationObserver(() => sync());
+    // URL 変化・DOM 変化の監視。MutationObserver が高頻度で発火するので sync はレート制限する
+    const MIN_SYNC_INTERVAL_MS = 300;
+    let lastSyncAt = 0;
+    let syncTimer: number | null = null;
+    function scheduleSync(): void {
+      if (syncTimer !== null) return;
+      const wait = Math.max(0, MIN_SYNC_INTERVAL_MS - (Date.now() - lastSyncAt));
+      syncTimer = window.setTimeout(() => {
+        syncTimer = null;
+        lastSyncAt = Date.now();
+        sync();
+      }, wait);
+    }
+    const observer = new MutationObserver(scheduleSync);
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    window.addEventListener("popstate", sync);
+    window.addEventListener("popstate", scheduleSync);
     window.setInterval(sync, 1000);
   },
 });

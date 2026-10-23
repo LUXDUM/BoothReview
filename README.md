@@ -8,9 +8,10 @@ BOOTH (booth.pm) の商品ページ上に、**このサービス独自のレビ�
 - 公開 Web サイトは作らない(閲覧は拡張機能のみ)
 - 現状はテキストレビューのみ(将来の画像添付に DB 構造は対応済み: docs/db.md)
 
+**Chrome 拡張のソースコードは別リポジトリ [BoothReviewExtension](https://github.com/LUXDUM/BoothReviewExtension) に移設しました。**
+
 ```
 BoothReview/
-├─ extension/        Chrome拡張 (WXT + TypeScript)
 ├─ server/           APIサーバ (Node 20/22 + Hono + Drizzle ORM + PostgreSQL)
 ├─ docs/             api.md / db.md / ops.md(運用手順)
 ├─ docker-compose.yml / .env.example / 本README
@@ -21,6 +22,7 @@ BoothReview/
 ### 拡張: WXT
 - MV3 専用のビルドツール。manifest 自動生成・dev 自動リロード・`defineContentScript` / `defineBackground` の helper で MV3 特有のボイラープレートが消える。
 - Vite 単体(CRXJS等)より拡張向けの DX が良く、型も強い。本拡張は DOM 注入が主体のためフレームワークは使わない。
+- 詳細は BoothReviewExtension リポジトリを参照。
 
 ### サーバー: Node.js + Hono + Drizzle ORM
 - **Hono**: 軽量・起動が速く、家庭内 (i7-4770 / RAM 16GB) で余裕を持って動く。ミドルウェア(bodyLimit)は最小限のみのプロジェクト。型検査が厳格でテストしやすい。
@@ -64,8 +66,10 @@ curl https://reviews.example.com/healthz   # Tunnel 経由
 
 ## 2. 拡張のビルドと読み込み
 
+Chrome 拡張のソースは [BoothReviewExtension](https://github.com/LUXDUM/BoothReviewExtension) リポジトリにあります。
+
 ```bash
-cd extension
+cd BoothReviewExtension
 # 1) 自分の API ドメインを設定する (ビルド時に host_permissions に焼き込まれる)
 #    src/shared/config.ts の API_ORIGIN を書き換える
 npm install
@@ -74,12 +78,12 @@ npm run test         # 商品ID抽出など純粋ロジックのテスト
 npm run typecheck
 ```
 
-Chrome → `chrome://extensions` → デベロッパーモード → 「パッケージ化されていない拡張機能を読み込む」→ `extension/.output/chrome-mv3` を選択。
+Chrome → `chrome://extensions` → デベロッパーモード → 「パッケージ化されていない拡張機能を読み込む」→ `.output/chrome-mv3` を選択。
 
 BOOTH の商品ページ (`.../items/<id>`) を開くとレビューパネルが表示される。
 
 > **URLパターンは実機で確認してください** (booth.pm 直下とショップのサブドメインの両方)。
-> 対象判定は `extension/src/core/booth-dom.ts` に集約しているため、仕様変更時はこの1ファイルを直すだけです。
+> 対象判定は BoothReviewExtension リポジトリの `src/core/booth-dom.ts` に集約しているため、仕様変更時はこの1ファイルを直すだけです。
 
 ## 3. 使い方 / API
 
@@ -127,7 +131,7 @@ Turnstile のホスト名検証に `chrome-extension://` 起源が載せられ�
 ### その他の既知の事項
 
 - レート制限のカウンタはAPIプロセスのメモリ内にあり、**再起動でリセット**されます
-- BOOTH 側の DOM/URL 変更でパネルの挿入位置が壊れる可能性があります(対象箇所は `extension/src/core/booth-dom.ts` に集中)
+- BOOTH 側の DOM/URL 変更でパネルの挿入位置が壊れる可能性があります(対象箇所は BoothReviewExtension リポジトリの `src/core/booth-dom.ts` に集中)
 - 公開一覧のキャッシュは 60 秒(`CACHE_MAX_AGE_SECONDS`)です。削除・非表示が反映されるまで最大 60 秒かかります
 
 ## 5. 開発
@@ -136,8 +140,8 @@ Turnstile のホスト名検証に `chrome-extension://` 起源が載せられ�
 # サーバー (型チェック + テスト)
 cd server && npm install && npm run typecheck && npm test
 
-# 拡張 (dev モードで自動リロード)
-cd extension && npm install && npm run dev && npm run test
+# 拡張は BoothReviewExtension リポジトリにて (dev モードで自動リロード)
+cd BoothReviewExtension && npm install && npm run dev && npm run test
 
 # docker で実 DB を動かす場合 (本ポート確認用)
 docker compose up -d db
@@ -145,7 +149,7 @@ docker compose up -d db
 ```
 
 - APIの主要処理(投稿/更新/削除・所有権・レート制限・通報・管理・ETag)は `server/test/routes.test.ts` が網羅
-- 商品ID抽出 / DOM アンカー選定は `extension/test/booth-dom.test.ts`
+- 商品ID抽出 / DOM アンカー選定は BoothReviewExtension リポジトリの `test/booth-dom.test.ts`
 
 ## 6. 将来の拡張(今回は実装しない)
 

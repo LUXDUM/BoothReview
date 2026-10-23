@@ -112,11 +112,13 @@ export default defineContentScript({
       if (itemId !== null) {
         const want = `items:${itemId}`;
         if (want === mountedTarget) {
-          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す (連発防止の冷却あり)
+          // バッジ/パネルが BOOTH 側の再描画で消された場合は付け直す (連発防止の冷却あり)。
+          // ショップカードが遅れてハイドレートされた場合もショップ名の横へ付け直す
           if (
             !document.getElementById("boothreview-panel-host") ||
             (findMountAnchor(document) !== null &&
-              document.getElementById("boothreview-badge-host") === null)
+              !document.getElementById("boothreview-badge-host")) ||
+            itemBadgeShouldRelocate()
           ) {
             if (remountAllowed()) {
               panel?.destroy();
@@ -171,6 +173,19 @@ export default defineContentScript({
       if (now - lastRemountAt < REMOUNT_COOLDOWN_MS) return false;
       lastRemountAt = now;
       return true;
+    }
+
+    /**
+     * 商品ページの☆チップがショップ名の横に来ていないか。
+     * BOOTH はショップカードを遅れて描画するため、初回マウント時に無ければ
+     * 最上部にフォールバックして、ここで毎 tick 再配置を試みる。
+     */
+    function itemBadgeShouldRelocate(): boolean {
+      const anchor = findItemBadgeAnchor(document);
+      if (!anchor || !anchor.parentElement) return false;
+      const host = document.getElementById("boothreview-badge-host");
+      if (!host) return false;
+      return host.parentElement !== anchor.parentElement || host.previousElementSibling !== anchor;
     }
 
     /**

@@ -147,12 +147,12 @@ function updateChipText(chip: HTMLElement, summary: ChipSummary | undefined): vo
   const text = document.createElement("span");
   if (!summary || summary.count === 0) {
     // レビューなし: グレーで控えめに (背景・枠なし)
-    star.textContent = "☆";
+    star.textContent = "★";
     star.style.color = "#b3ada2";
     text.textContent = "(0)";
     text.style.color = "#999";
   } else {
-    star.textContent = "☆";
+    star.textContent = "★";
     star.style.color = "#FF6201";
     text.textContent = `${summary.average?.toFixed(1) ?? "-"} (${summary.count})`;
     text.style.color = "#111";

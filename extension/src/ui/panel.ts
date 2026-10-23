@@ -432,7 +432,7 @@ export type BadgeHandle = { destroy(): void };
 type BadgeTarget = { kind: "item"; itemId: number } | { kind: "shop"; shop: string };
 
 /**
- * 「全体評価 ☆チップ」 (商品: ショップ名の横 / ショップ: ページ最上部)。
+ * 「全体評価 ★チップ」 (商品: ショップ名の横 / ショップ: ページ最上部)。
  * 押すとページ下部のレビュー一覧までスクロールする。
  */
 export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }): BadgeHandle {
@@ -447,7 +447,7 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
   badge.setAttribute("aria-label", "全レビュー評価へ移動");
   const star = document.createElement("span");
   star.className = "brb-star";
-  star.textContent = "☆";
+  star.textContent = "★";
   const label = document.createElement("span");
   label.className = "brb-label";
   label.textContent = "読み込み中…";
@@ -461,7 +461,7 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
       badge.replaceChildren();
       const s = document.createElement("span");
       s.className = "brb-star";
-      s.textContent = "☆";
+      s.textContent = "★";
       const l = document.createElement("span");
       l.className = "brb-label";
       l.textContent = "レビュー";
@@ -475,7 +475,7 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
       label.textContent = "(0)";
       return;
     }
-    // 平均は黒字・☆はオレンジ (#FF6201)・件数は (n) のみ (簡素なUI)
+    // 平均は黒字・★はオレンジ (#FF6201)・件数は (n) のみ (簡素なUI)
     star.className = "brb-star";
     label.className = "brb-label";
     label.textContent = `${average?.toFixed(1) ?? "-"} (${count})`;

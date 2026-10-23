@@ -52,6 +52,7 @@ describe("POST /v1/items/:id/reviews", () => {
     expect(data.created).toBe(true);
     expect(data.review).toEqual({
       id: expect.any(Number),
+      author: expect.stringMatching(/^[0-9a-f]{8}$/), // 短縮ハッシュは公開する (フルハッシュ/UUIDは出さない)
       rating: 4,
       body: "素晴らしい商品でした",
       createdAt: expect.any(String),

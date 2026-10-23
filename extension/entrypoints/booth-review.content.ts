@@ -10,6 +10,7 @@ import {
 } from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
 import { mountPanel, mountBadge, type PanelHandle } from "../src/ui/panel";
+import { scanListingChips } from "../src/ui/listing";
 import { API_ORIGIN } from "../src/shared/config";
 
 /**
@@ -93,6 +94,10 @@ export default defineContentScript({
     }
 
     function sync(): void {
+      // 全ページ共通: 一覧カード (.item-card) に評価チップを挿入
+      // (ホーム/検索 だけでなく、ショップの新着一覧や商品ページ下部の関連カードにも出る)
+      scanListingChips(document);
+
       const itemId = extractItemIdFromUrl(location.href);
       if (itemId !== null) {
         const want = `items:${itemId}`;

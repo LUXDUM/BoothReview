@@ -31,6 +31,7 @@ function clone(r: Row): ReviewRecord {
   return {
     id: r.id,
     itemId: r.itemId,
+    authorHash: r.authorHash,
     rating: r.rating,
     body: r.body,
     status: r.status,
@@ -67,6 +68,17 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
         reviewCount: published.length,
         ratingSum: published.reduce((s, r) => s + r.rating, 0),
       };
+    },
+
+    async listSummaries(itemIds) {
+      return itemIds.slice(0, 50).map((id) => {
+        const published = db.reviews.filter((r) => r.itemId === id && r.status === "published");
+        return {
+          itemId: id,
+          reviewCount: published.length,
+          ratingSum: published.reduce((s, r) => s + r.rating, 0),
+        };
+      });
     },
 
     async getShopSummary(shop) {
@@ -184,7 +196,7 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
       return true;
     },
 
-    async adminListReviews({ status, itemId, query, order, page, perPage }) {
+    async adminListReviews({ status, itemId, query, authorHashHex, order, page, perPage }) {
       const filtered = db.reviews
         .filter(
           (r) =>
@@ -192,7 +204,8 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
             (itemId === undefined || r.itemId === itemId) &&
             (query === undefined ||
               query === "" ||
-              r.body.toLowerCase().includes(query.toLowerCase())),
+              r.body.toLowerCase().includes(query.toLowerCase())) &&
+            (authorHashHex === undefined || r.authorHash === authorHashHex),
         )
         .sort((a, b) => {
           if (order === "reports") {

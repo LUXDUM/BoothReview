@@ -2,6 +2,8 @@
 
 export type ApiReview = {
   id: number;
+  /** 投稿者の匿名ID短縮ハッシュ (頭8文字。サーバー側で付与される) */
+  author?: string;
   /** ショップ集計 (/v1/shops/:shop/reviews) の一覧でのみ付く */
   itemId?: number;
   rating: number;
@@ -21,6 +23,11 @@ export type ApiReviewsResponse = {
 export type ApiSummaryResponse = {
   count: number;
   average: number | null;
+};
+
+/** GET /v1/items/ratings?ids=... の応答。レビューが無い item は含まれない */
+export type ApiRatingsResponse = {
+  ratings: Record<string, ApiSummaryResponse>;
 };
 
 export type ApiMineResponse = {

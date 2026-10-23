@@ -34,6 +34,8 @@ export type AppDeps = {
 
 type PublicReview = {
   id: number;
+  /** 投稿者の匿名ID短縮ハッシュ (先頭8文字。UUID自体は返さない。なりすまし防止のため) */
+  author: string;
   rating: number;
   body: string;
   createdAt: string;
@@ -41,11 +43,13 @@ type PublicReview = {
 };
 
 /**
- * 公開レスポンス。匿名IDやそのハッシュは、いかなるエンドポイントでも返さない。
+ * 公開レスポンス。匿名IDの生値とフルハッシュは返さない (短縮ハッシュのみ)。
+ * フルハッシュがないと本人確認 (PATCH/DELETE) のなりすましができないため。
  */
 function toPublic(r: ReviewRecord): PublicReview {
   return {
     id: r.id,
+    author: r.authorHash.slice(0, 8),
     rating: r.rating,
     body: r.body,
     createdAt: r.createdAt.toISOString(),
@@ -57,6 +61,8 @@ function toAdminReview(r: ReviewRecord & { reportCount: number }) {
   return {
     id: r.id,
     itemId: r.itemId,
+    /** 匿名IDのハッシュ短縮 (管理UIの検索/識別用。管理画面でしか出ない) */
+    author: r.authorHash.slice(0, 8),
     rating: r.rating,
     body: r.body,
     status: r.status,
@@ -273,6 +279,35 @@ export function createApp(deps: AppDeps): Hono {
       total,
       totalPages: Math.max(1, Math.ceil(total / perPage)),
     };
+    const json = JSON.stringify(payload);
+    if (setCacheHeaders(c, json)) return c.body(null, 304);
+    return c.json(payload);
+  });
+
+  app.get("/v1/items/ratings", async (c) => {
+    // 一覧ページのカード評価表示用の一括取得。1 リクエストあたり最大 50 件。
+    limitOrThrow(ipBucketKey("list", c), config.rateLimits.listPerIpPerMinute, MINUTE_MS);
+    const idsRaw = asReq(c).req.query("ids") ?? "";
+    const ids = Array.from(
+      new Set(
+        idsRaw
+          .split(",")
+          .filter((s) => s.trim() !== "")
+          .map((s) => parseWith(itemIdSchema, s)),
+      ),
+    ).slice(0, 50);
+    if (ids.length === 0) throw Errors.validation("ids query required");
+    const summaryList = await repo.listSummaries(ids);
+    const ratings: Record<string, { count: number; average: number | null }> = {};
+    for (const s of summaryList) {
+      // レビュー 0 件の商品は値を返さない (フロント側は「未取得=レビューなし」として扱う)
+      if (s.reviewCount === 0) continue;
+      ratings[String(s.itemId)] = {
+        count: s.reviewCount,
+        average: Number((s.ratingSum / s.reviewCount).toFixed(2)),
+      };
+    }
+    const payload = { ratings };
     const json = JSON.stringify(payload);
     if (setCacheHeaders(c, json)) return c.body(null, 304);
     return c.json(payload);
@@ -512,6 +547,9 @@ export function createApp(deps: AppDeps): Hono {
     const itemId = itemIdRaw ? parseWith(itemIdSchema, itemIdRaw) : undefined;
     const queryRaw = asReq(c).req.query("query");
     const query = queryRaw ? parseWith(z.string().min(1).max(200), queryRaw) : undefined;
+    // 匿名ID (生UUID) で検索: サーバー側でハッシュ化してから照合する
+    const anonIdRaw = asReq(c).req.query("anonId");
+    const authorHashHex = anonIdRaw ? authorHash(config.pepper, parseWith(anonIdSchema, anonIdRaw)) : undefined;
     const orderRaw = asReq(c).req.query("order");
     const order = orderRaw
       ? parseWith(z.enum(["created", "reports"]), orderRaw)
@@ -525,6 +563,7 @@ export function createApp(deps: AppDeps): Hono {
       status,
       itemId,
       query,
+      authorHashHex,
       order,
       page,
       perPage,
@@ -604,6 +643,10 @@ const DASHBOARD_HTML = `<!doctype html>
   #login, #error { max-width: 380px; margin: 12vh auto; text-align: center; background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 22px; }
   #error { color: #b3261e; }
   input[type=password] { width: 100%; padding: 8px; border: 1px solid #cbd2da; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  input[type=text] { padding: 8px; border: 1px solid #cbd2da; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  .searchrow { display: flex; gap: 8px; }
+  .searchrow input[type=text] { flex: 1; }
+  .anonid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   .btn { background: #0074c8; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
   .btn:disabled { opacity: .5; cursor: default; }
   .ghost { background: #eef0f3; color: #333; border: none; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
@@ -630,6 +673,15 @@ const DASHBOARD_HTML = `<!doctype html>
     <section><h2>星評価の分布 (公開レビュー)</h2><div id="dist"></div></section>
     <section><h2>投稿の推移 (直近30日・全ステータス)</h2><div id="trend" class="barwrap"></div></section>
     <section><h2>通報の多いレビュー</h2><div id="reported"></div></section>
+    <section><h2>レビュー検索 (本文 / 匿名ID) と削除</h2>
+      <div class="searchrow">
+        <input id="sq" type="text" placeholder="本文の部分一致 (未入力可)">
+        <input id="sanon" type="text" placeholder="匿名ID (UUIDをペースト)">
+        <button id="sbtn" class="btn" type="button">検索</button>
+      </div>
+      <div id="smsg" class="muted" style="margin-top:6px; font-size:12px">本文または匿名IDのどちらかを入力してください。匿名IDは拡張機能の「あなたの匿名ID」表示からコピーできます。</div>
+      <div id="sresults" style="margin-top:10px"></div>
+    </section>
     <section><h2>レビューの多いアイテム (公開)</h2><div id="items"></div></section>
     <section><h2>サーバー容量</h2><div id="server"></div></section>
   </main>
@@ -712,6 +764,121 @@ const DASHBOARD_HTML = `<!doctype html>
   }
 
   function td(v, cls) { return el("td", cls, v); }
+
+  function sMsg(text, isError) {
+    var m = $("smsg");
+    m.textContent = text;
+    m.style.color = isError ? "#b3261e" : "";
+  }
+
+  var SEARCH_HEAD = ["ID", "商品", "評価", "匿名ID", "状態", "通報", "本文", "日時", "操作"];
+
+  function renderSearch(d) {
+    var wrap = $("sresults");
+    wrap.textContent = "";
+    if (!d.reviews || d.reviews.length === 0) {
+      wrap.append(el("div", "muted", "該当するレビューはありません"));
+      return;
+    }
+    wrap.append(el("div", "muted", d.reviews.length + " 件 / 全 " + d.total + " 件"));
+    var t = el("table");
+    var tr = el("tr");
+    for (var i = 0; i < SEARCH_HEAD.length; i++) tr.append(el("th", "", SEARCH_HEAD[i]));
+    t.appendChild(tr);
+    for (var k = 0; k < d.reviews.length; k++) {
+      var r = d.reviews[k];
+      var row = el("tr");
+      var st = el("span", "badge " + r.status, statusName(r.status));
+      var stTd = td("");
+      stTd.appendChild(st);
+      // 操作: 削除 (公開/非表示→削除) / 復活 (削除→公開) / 非表示
+      var act = el("td");
+      if (r.status !== "deleted") {
+        var del = el("button", "ghost", "削除");
+        del.addEventListener("click", adminPatch(r.id, "deleted"));
+        act.appendChild(del);
+        var hide = el("button", "ghost", r.status === "hidden" ? "公開に戻す" : "非表示");
+        hide.style.marginLeft = "4px";
+        hide.addEventListener("click", adminPatch(r.id, r.status === "hidden" ? "published" : "hidden"));
+        act.appendChild(hide);
+      } else {
+        var restore = el("button", "ghost", "公開に戻す");
+        restore.addEventListener("click", adminPatch(r.id, "published"));
+        act.appendChild(restore);
+      }
+      var link = el("a", "", String(r.itemId));
+      link.href = "https://booth.pm/ja/items/" + r.itemId;
+      link.target = "_blank";
+      link.rel = "noopener";
+      var itemTd = td("");
+      itemTd.appendChild(link);
+      row.append(
+        td(String(r.id)),
+        itemTd,
+        td("★".repeat(r.rating)),
+        td(r.author, "anonid"),
+        stTd,
+        td(String(r.reportCount)),
+        td(r.body, "clip"),
+        td(r.updatedAt.slice(0, 16).replace("T", " ")),
+        act
+      );
+      t.appendChild(row);
+    }
+    wrap.appendChild(t);
+  }
+
+  function adminPatch(id, status) {
+    return function () {
+      if (!confirm("レビュー #" + id + " を「" + statusName(status) + "」にしますか?")) return;
+      fetch("/v1/admin/reviews/" + id, {
+        method: "PATCH",
+        headers: { authorization: "Bearer " + sessionStorage.getItem(KEY), "content-type": "application/json" },
+        body: JSON.stringify({ status: status })
+      })
+        .then(function (res) {
+          if (res.status === 401) throw new Error("トークンが違います");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          sMsg("レビュー #" + id + " を " + statusName(status) + " にしました");
+          runSearch(true);
+        })
+        .catch(function (e) { sMsg("更新に失敗: " + e.message, true); });
+    };
+  }
+
+  function runSearch(silent) {
+    var t = sessionStorage.getItem(KEY);
+    if (!t) { showLogin(); return; }
+    var qs = [];
+    var q = $("sq").value.trim();
+    var anon = $("sanon").value.trim();
+    if (q) qs.push("query=" + encodeURIComponent(q));
+    if (anon) qs.push("anonId=" + encodeURIComponent(anon));
+    if (qs.length === 0) {
+      if (!silent) sMsg("本文か匿名IDを入力してください", true);
+      return;
+    }
+    if (!silent) sMsg("検索中…");
+    fetch("/v1/admin/reviews?" + qs.join("&"), { headers: { authorization: "Bearer " + t } })
+      .then(function (res) {
+        if (res.status === 401) throw new Error("トークンが違います (ADMIN_TOKEN)");
+        if (!res.ok) {
+          return res.json().then(function (j) {
+            throw new Error(j && j.error ? j.error.message : "HTTP " + res.status);
+          });
+        }
+        return res.json();
+      })
+      .then(function (d) {
+        sMsg(qs.length + " 件の条件で " + d.total + " 件ヒット");
+        renderSearch(d);
+      })
+      .catch(function (e) { sMsg("検索に失敗: " + e.message, true); });
+  }
+
+  $("sbtn").addEventListener("click", function () { runSearch(false); });
+  $("sanon").addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(false); });
+  $("sq").addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(false); });
 
   function renderReported(d) {
     var wrap = $("reported"); wrap.textContent = "";

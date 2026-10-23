@@ -1,6 +1,7 @@
 import type {
   ApiErrorResponse,
   ApiMineResponse,
+  ApiRatingsResponse,
   ApiRequestMessage,
   ApiResponseMessage,
   ApiReviewsResponse,
@@ -148,6 +149,10 @@ export const api = {
   },
   shopSummary(shop: string): Promise<SummaryResult> {
     return apiCall<ApiSummaryResponse>("GET", `/v1/shops/${shop}/summary`);
+  },
+  /** 一覧ページのカード用バッチ集計 (最大50件/リクエスト) */
+  ratings(ids: number[]): Promise<ApiResult<ApiRatingsResponse>> {
+    return apiCall<ApiRatingsResponse>("GET", `/v1/items/ratings?ids=${ids.join(",")}`);
   },
   shopList(shop: string, page: number): Promise<ReviewListResult> {
     return apiCall<ApiReviewsResponse>("GET", `/v1/shops/${shop}/reviews?page=${page}`);

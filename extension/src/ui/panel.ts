@@ -32,6 +32,8 @@ export function mountPanel(deps: MountDeps): PanelHandle {
   let page = 1;
   let totalPages = 1;
   let mine: ApiReview | null = null;
+  /** 自分の匿名ID (ローカル表示のみ。API送信には毎回 getAnonId() を使う) */
+  let myAnonId: string | null = null;
   let editing = false;
   let destroyed = false;
   let selectedRating = 0;
@@ -115,6 +117,10 @@ export function mountPanel(deps: MountDeps): PanelHandle {
     const li = el("li", "br-item") as HTMLLIElement;
     const head = el("div", "br-item-head");
     head.append(el("span", "br-stars", stars(review.rating)));
+    // 投稿者の匿名ID短縮ハッシュ (サーバー付与。なりすまし防止のため生UUIDは出さない)
+    if (review.author) {
+      head.append(el("span", "br-anon", `匿名 ${review.author}`));
+    }
     head.append(el("time", "br-date", formatDate(review.createdAt)));
     // 本文は textContent のみ (innerHTML は使わない)
     const body = el("div", "br-body", review.body);
@@ -190,6 +196,7 @@ export function mountPanel(deps: MountDeps): PanelHandle {
   async function loadMine(): Promise<ReturnType<typeof api.mine> | null> {
     try {
       const anonId = await getAnonId();
+      myAnonId = anonId; // フォームの「あなたの匿名ID」表示用
       return await api.mine(itemId, anonId);
     } catch (e) {
       // 匿名IDが取得できない環境では「自分のレビュー」を表示できないだけ
@@ -224,6 +231,14 @@ export function mountPanel(deps: MountDeps): PanelHandle {
     if (mine && !editing) {
       // 自分のレビューが公開/非確認を含めて存在する場合の案内
       title.append(el("span", "br-form-note", "編集 / 削除 は下のフォームから行えます"));
+    }
+
+    // 自分の匿名IDを見える化。短縮ハッシュはサーバー側 (pepper 付き HMAC) で生成されるため
+    // クライアントでは再計算できない — 一覧の「匿名 ■■■■■■■■」がこの ID から作られていることを案内する
+    if (myAnonId) {
+      title.append(
+        el("span", "br-form-note", `あなたの匿名ID: ${myAnonId} — 一覧の「匿名 ●●●●●●●●」はこのIDから生成された短縮ハッシュです`),
+      );
     }
 
     // 星の選択
@@ -384,6 +399,7 @@ const PANEL_CSS = `
   .br-item-head { display: flex; gap: 12px; align-items: baseline; }
   .br-stars { color: #e8a013; letter-spacing: 2px; font-weight: 600; white-space: nowrap; }
   .br-date { color: #777; font-size: 12px; }
+  .br-anon { color: #999; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .br-body { white-space: pre-wrap; word-break: break-word; margin: 4px 0; }
   .br-item-foot { display: flex; justify-content: flex-end; }
   .br-form { margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; }

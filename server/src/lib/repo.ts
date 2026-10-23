@@ -8,6 +8,8 @@ export type ReviewStatus = "published" | "hidden" | "deleted";
 export type ReviewRecord = {
   id: number;
   itemId: number;
+  /** 匿名ID を pepper で HMAC-SHA256 したハッシュ (author_hash)。公開側では短縮頭8文字のみ出る */
+  authorHash: string;
   rating: number;
   body: string;
   status: ReviewStatus;
@@ -33,6 +35,9 @@ export type ReviewRepository = {
 
   /** 公開中レビューの集計 (集計テーブルから O(1) で読む) */
   getSummary(itemId: number): Promise<Summary>;
+
+  /** 一覧ページ用の一括集計 (存在しない itemId は含まれない) */
+  listSummaries(itemIds: number[]): Promise<Array<Summary & { itemId: number }>>;
 
   /** ショップ集計: そのショップのサブドメインが付いた公開レビューのみ */
   getShopSummary(shop: string): Promise<Summary>;
@@ -94,6 +99,8 @@ export type AdminListFilter = {
   itemId?: number | undefined;
   /** 本文の部分一致検索 (LIKE) */
   query?: string | undefined;
+  /** 匿名ID (生UUID) で検索 — ルート層でハッシュ化して渡される */
+  authorHashHex?: string | undefined;
   /** 並び順。未指定は作成日時の新しい順 */
   order?: "created" | "reports" | undefined;
   page: number;

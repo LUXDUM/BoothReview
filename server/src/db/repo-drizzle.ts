@@ -1,4 +1,4 @@
-import { and, avg, count, desc, eq, ilike, sql } from "drizzle-orm";
+import { and, avg, count, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { reports, reviewStats, reviews } from "./schema.js";
 import type {
@@ -26,6 +26,7 @@ function toRecord(row: Row | undefined | null): ReviewRecord | null {
   return {
     id: Number(row.id),
     itemId: Number(row.itemId),
+    authorHash: row.authorHash,
     rating: row.rating,
     body: row.body,
     status: row.status as ReviewStatus,
@@ -76,6 +77,19 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       const row = rows[0];
       if (!row) return { reviewCount: 0, ratingSum: 0 };
       return { reviewCount: row.reviewCount, ratingSum: row.ratingSum };
+    },
+
+    async listSummaries(itemIds) {
+      if (itemIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(reviewStats)
+        .where(inArray(reviewStats.itemId, itemIds));
+      return rows.map((r) => ({
+        itemId: Number(r.itemId),
+        reviewCount: r.reviewCount,
+        ratingSum: r.ratingSum,
+      }));
     },
 
     async getShopSummary(shop): Promise<Summary> {
@@ -229,11 +243,12 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
       return updated.length > 0;
     },
 
-    async adminListReviews({ status, itemId, query, order, page, perPage }) {
+    async adminListReviews({ status, itemId, query, authorHashHex, order, page, perPage }) {
       const conds = [];
       if (status) conds.push(eq(reviews.status, status));
       if (itemId !== undefined) conds.push(eq(reviews.itemId, itemId));
       if (query) conds.push(ilike(reviews.body, `%${escapeLike(query)}%`));
+      if (authorHashHex) conds.push(eq(reviews.authorHash, authorHashHex));
       const where = conds.length > 0 ? and(...conds) : undefined;
 
       const rows = await db

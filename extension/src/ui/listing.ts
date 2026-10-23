@@ -72,6 +72,21 @@ function cardTargetOf(anchor: Element): { card: HTMLElement; title: HTMLElement 
   return { card, title };
 }
 
+/** タイトル構造が不明な wrapper 型の位置特定: カテゴリタグ/バッジ行の下にあるタイトル<a>を返す */
+function fallbackTitleOf(card: HTMLElement): HTMLElement | null {
+  // 実機 2026-11: タイトルは <a href=itemURL><div class="mt-[6px] typography-14 line-clamp-2 …"><span>…
+  // カテゴリ (typography-12) と区別するため line-clamp / typography-14 を優先する
+  const inner =
+    card.querySelector<HTMLElement>("a[href] > div.line-clamp-2") ??
+    card.querySelector<HTMLElement>("a[href] > div[class*='line-clamp']") ??
+    card.querySelector<HTMLElement>("a[href] > div[class*='typography-14']");
+  if (!inner) return null;
+  const a = inner.parentElement;
+  // <a> 自体がカード直下 (画像オーバーレイ等) の場合はタイトル行ではない
+  if (!a || a === card || !(a instanceof HTMLAnchorElement)) return null;
+  return a;
+}
+
 /** デバッグバナー用: アンカー周辺の構造シグネチャ (親4段, tag.クラス先頭2個) */
 function anchorSignature(anchor: Element): string {
   const parts: string[] = [];
@@ -199,6 +214,8 @@ export function scanListingChips(doc: Document): void {
   const targets = new Map<HTMLElement, { id: number; title: HTMLElement }>();
   /** タイトル要素が見つからないカード → カード末尾にチップを足すフォールバック */
   const fallbackTargets = new Map<HTMLElement, { id: number }>();
+  /** 位置特定できなかったカード (バナー用シグネチャの収集元) */
+  const unknownCards: HTMLElement[] = [];
   const ids = new Set<number>();
   const signatures = new Set<string>();
   for (const anchor of anchors) {
@@ -210,18 +227,27 @@ export function scanListingChips(doc: Document): void {
       if (!targets.has(t.card)) targets.set(t.card, { id, title: t.title });
       continue;
     }
-    // タイトル無し → フォールバック対象。カード要素 (.item-card-wrapper 等) があれば末尾に足す
+    // タイトル無し → wrapper 内でタイトル<a> (line-clamp 等) を位置特定できれば通常パスで挿入。
+    // それも無ければ末尾に足すフォールバック (タグ下にできない最終手段)
     const card = anchor.closest<HTMLElement>(".item-card-wrapper");
     if (card && !targets.has(card)) {
-      if (!fallbackTargets.has(card)) fallbackTargets.set(card, { id });
-    } else {
+      const pos = fallbackTitleOf(card);
+      if (pos) {
+        targets.set(card, { id, title: pos });
+      } else if (!fallbackTargets.has(card)) {
+        fallbackTargets.set(card, { id });
+        unknownCards.push(card);
+      }
+    } else if (!card) {
       signatures.add(anchorSignature(anchor));
     }
   }
   listingStats.idsFound = ids.size;
   listingStats.cardsFound = targets.size;
   listingStats.fallbackCards = fallbackTargets.size;
-  listingStats.skipSignatures = Array.from(signatures).slice(0, 4);
+  listingStats.skipSignatures = unknownCards.length
+    ? unknownCards.slice(0, 2).map((card) => `${card.children.length}子: ${Array.from(card.children).map((c) => { const cls = typeof c.className === "string" ? c.className : ""; return c.tagName.toLowerCase() + "." + cls.trim().split(/\s+/).filter(Boolean).slice(0, 2).join("."); }).join(",")}`)
+    : Array.from(signatures).slice(0, 4);
   if (targets.size === 0 && fallbackTargets.size === 0) {
     return;
   }

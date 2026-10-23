@@ -57,11 +57,13 @@ function itemIdFromAnchor(anchor: HTMLAnchorElement): number | null {
 
 /** (card, title) の組。title が無いカードは挿入位置を判定できないので skip */
 function cardTargetOf(anchor: Element): { card: HTMLElement; title: HTMLElement } | null {
-  // 旧レイアウト: .item-card / 新レイアウト (Tailwind 化されたホーム等): .item-card-wrapper
-  // (実機 2026-10 確認: .item-card-wrapper 内は従来と同じ .item-card__title 等を流用している)
+  // 旧レイアウト: .item-card / 新レイアウト (ホーム等): .item-card-wrapper
+  // (実機 2026-11 確認: wrapper 型は .item-card__title の div が無く、タイトルが a.item-card__title-anchor そのもの)
   const card = anchor.closest<HTMLElement>(".item-card") ?? anchor.closest<HTMLElement>(".item-card-wrapper");
   if (!card) return null;
-  const title = card.querySelector<HTMLElement>(".item-card__title");
+  const title =
+    card.querySelector<HTMLElement>(".item-card__title") ??
+    card.querySelector<HTMLElement>("[class*='item-card__title-anchor']");
   if (!title) return null;
   return { card, title };
 }

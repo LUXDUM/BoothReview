@@ -267,6 +267,9 @@ export function createApp(deps: AppDeps): Hono {
     }
   });
 
+  // プライバシーポリシー (公開・静的・外部リソース無し)
+  app.get("/privacy", (c) => c.html(PRIVACY_HTML));
+
   app.get("/v1/items/:itemId/reviews", async (c) => {
     limitOrThrow(
       ipBucketKey("list", c),
@@ -1146,5 +1149,87 @@ const DASHBOARD_HTML = `<!doctype html>
   if (saved) boot(saved); else showLogin();
 })();
 </script>
+</body>
+</html>`;
+
+/**
+ * プライバシーポリシー (公開静的ページ)。
+ * - 外部スクリプト/字体/画像なし・リンクのみ。XSS 要素は持たない (本文は全て静的固定文字列)
+ */
+const PRIVACY_HTML = `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOOTHReview プライバシーポリシー</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; background: #f5f6f8; color: #222; font-size: 14px; line-height: 1.7; }
+  header { background: #173a5e; color: #fff; padding: 14px 20px; }
+  header h1 { font-size: 16px; margin: 0; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 48px; }
+  section { background: #fff; border: 1px solid #e2e5ea; border-radius: 10px; padding: 14px 18px; margin-bottom: 14px; }
+  h2 { font-size: 14px; margin: 0 0 8px; color: #173a5e; }
+  ul, p { margin: 6px 0; }
+  li { margin: 2px 0; }
+  code { background: #eef0f3; border-radius: 4px; padding: 0 4px; font-size: 12.5px; }
+  .muted { color: #6b7280; font-size: 12px; }
+  a { color: #0074c8; }
+</style>
+</head>
+<body>
+<header><h1>BOOTHReview プライバシーポリシー</h1></header>
+<main>
+  <p>本ページは、BOOTH (booth.pm) の商品ページ上に第三者レビューを表示・投稿できるブラウザ拡張「BOOTHReview」が通信するバックエンド (<code>reviews.luxdum.win</code>) の取扱いを説明します。</p>
+
+  <section><h2>1. 扱う情報の範囲</h2>
+    <ul>
+      <li>本サービスは BOOTH とは無関係な、個人が運営する第三者レビューです。BOOTH 本体 (booth.pm) とは一切通信せず、BOOTH の商品情報を取得・保存しません (扱うのは商品/ショップの ID・サブドメインだけ)。</li>
+      <li>ログイン機能はなく、メールアドレスや氏名、SNS アカウント等の個人を特定できる情報は扱いません。</li>
+    </ul>
+  </section>
+
+  <section><h2>2. 保存する情報</h2>
+    <ul>
+      <li><strong>匿名IDのハッシュ値</strong> (拡張内で生成したランダム UUID を pepper 付き HMAC-SHA256 でハッシュした値)。元の UUID は保存せず、ハッシュのみで本人性の照合・重複判定を行います。</li>
+      <li><strong>レビュー内容</strong>: 5段階評価 (1〜5)・本文。投稿日時 (UTC)。</li>
+      <li><strong>ショップのサブドメイン</strong>: 投稿元 URL から採取した <code>xxx.booth.pm</code> のサブドメイン (ショップ単位の集計に使用)。</li>
+      <li><strong>通報の記録</strong>: 通報されたレビューと通報者の匿名IDハッシュ (重複通報の判定のみに使用)。</li>
+    </ul>
+  </section>
+
+  <section><h2>3. 取得・保存しないもの</h2>
+    <ul>
+      <li><strong>IPアドレス</strong>: 悪用防止 (レート制限) のためにメモリ上で一時的に参照するのみで、データベースやログには保存しません。</li>
+      <li>匿名IDの元値 (UUID)・個人を特定できる情報・BOOTH のログイン情報や Cookie。</li>
+      <li>デバッグ用ログにも IP やレビュー本文は出力しません (メソッド・パス・ステータス・処理時間のみ)。</li>
+    </ul>
+  </section>
+
+  <section><h2>4. 外部サービス</h2>
+    <ul>
+      <li>本サービスへの通信は Cloudflare (Tunnel / CDN) 経由で受けています。Cloudflare 側ではこれらの技術情報の処理が行われます (詳細は Cloudflare のプライバシーポリシーをご参照ください)。</li>
+    </ul>
+  </section>
+
+  <section><h2>5. 削除・非表示・投稿禁止</h2>
+    <ul>
+      <li>自分のレビューは、投稿に使用した端末 (匿名ID) からいつでも拡張内から削除できます。</li>
+      <li>他の利用者からの通報が一定数に達したレビューは自動で非表示になり、管理者が確認します。</li>
+      <li>悪質な投稿者に対しては、匿名IDのハッシュ単位で「投稿禁止 (BAN)」を登録することがあります (新規投稿・編集・通報ができなくなります)。解除の問い合わせは下記の連絡先へ。</li>
+      <li>削除済みのレビューは論理削除のためデータベースと日次バックアップ内に一定期間残ります。</li>
+    </ul>
+  </section>
+
+  <section><h2>6. お問い合わせ</h2>
+    <ul>
+      <li>GitHub Issues: <a href="https://github.com/LUXDUM/BoothReview/issues" rel="noopener">https://github.com/LUXDUM/BoothReview/issues</a></li>
+      <li>ソースコードは公開しています (サーバー: <a href="https://github.com/LUXDUM/BoothReview" rel="noopener">LUXDUM/BoothReview</a> / 拡張: <a href="https://github.com/LUXDUM/BoothReviewExtension" rel="noopener">LUXDUM/BoothReviewExtension</a>)。</li>
+    </ul>
+  </section>
+
+  <p class="muted">最終更新: 2026-10-24</p>
+</main>
 </body>
 </html>`;

@@ -5,7 +5,7 @@
 
 ## 1. 初期セットアップ
 
-サーバー要件目安: CPU + RAM 16GB 家庭内サーバーで余裕を持って動く (API + PostgreSQL + cloudflared + backup でメモリ ~300MB 程度)。
+サーバー要件目安: セルフホストの Ubuntu Server / Docker Compose。API + PostgreSQL + cloudflared + backup でメモリ ~300MB 程度なので、RAM 2GB程度のマシンでも余裕を持って動く。
 
 ```bash
 # リポジトリを配置

@@ -5,7 +5,7 @@ BOOTH (booth.pm) の商品ページ上に、**このサービス独自のレビ�
 
 - ログイン機能なし(匿名・UUIDのみ)
 - BOOTH 本体へは**何も送信しない**(商品情報の取得・複製・保存もしない。扱うのは商品IDだけ)
-- 公開 Web サイトは作らない(閲覧は拡張機能のみ)
+- 公開 Web サイトは作らない(閲覧は拡張機能のみ。プライバシーポリシー等の案内ページのみ公開)
 - 現状はテキストレビューのみ(将来の画像添付に DB 構造は対応済み: docs/db.md)
 
 **Chrome 拡張のソースコードは別リポジトリ [BoothReviewExtension](https://github.com/LUXDUM/BoothReviewExtension) に移設しました。**
@@ -25,7 +25,7 @@ BoothReview/
 - 詳細は BoothReviewExtension リポジトリを参照。
 
 ### サーバー: Node.js + Hono + Drizzle ORM
-- **Hono**: 軽量・起動が速く、家庭内 (i7-4770 / RAM 16GB) で余裕を持って動く。ミドルウェア(bodyLimit)は最小限のみのプロジェクト。型検査が厳格でテストしやすい。
+- **Hono**: 軽量・起動が速く、セルフホストの Ubuntu Server (RAM 2GB程度) で余裕を持って動く。ミドルウェア(bodyLimit)は最小限のみのプロジェクト。型検査が厳格でテストしやすい。
 - **Drizzle ORM**: SQL はすべてパラメータ化。マイグレーション (drizzle-kit) 付きで型安全。将来的な VPS/Supabase 移行は `DATABASE_URL` 差し替えで済む。
 - **Rate 制限**: 軽量の固定窓をメモリ内に実装(単一 API プロセス前提。再起動でリセットされる点は既知事項)。
 

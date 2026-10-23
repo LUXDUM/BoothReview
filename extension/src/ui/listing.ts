@@ -1,4 +1,5 @@
 import { api } from "./api";
+import { buildStars } from "./stars";
 
 /**
  * 商品一覧ページ (ホーム / 検索 / カテゴリ 等) の item-card に評価チップを差し込む。
@@ -131,34 +132,27 @@ function applyChip(card: HTMLElement, title: HTMLElement, summary: ChipSummary |
 
 function updateChipText(chip: HTMLElement, summary: ChipSummary | undefined): void {
   chip.textContent = "";
-  // 簡素なUI: 背景枠なし・☆はオレンジ (#FF6201)・平均は黒字・件数は (n) 形式
+  // 簡素なUI: 背景枠なし。5個の星を評価値ぶんだけオレンジで塗りつぶし (未塗りはグレー)
   chip.style.display = "inline-flex";
   chip.style.alignItems = "center";
-  chip.style.gap = "3px";
+  chip.style.gap = "4px";
   chip.style.margin = "3px 0";
   chip.style.padding = "0";
-  chip.style.width = "fit-content";
   chip.style.fontSize = "12px";
   chip.style.lineHeight = "1.4";
   chip.style.fontFamily = 'system-ui, -apple-system, "Segoe UI", sans-serif';
 
-  const star = document.createElement("span");
-  star.style.fontSize = "12px";
+  const rated = summary !== undefined && summary.count > 0 && summary.average !== null;
   const text = document.createElement("span");
-  if (!summary || summary.count === 0) {
-    // レビューなし: グレーで控えめに (背景・枠なし)
-    star.textContent = "★";
-    star.style.color = "#b3ada2";
+  if (!rated) {
     text.textContent = "(0)";
     text.style.color = "#999";
   } else {
-    star.textContent = "★";
-    star.style.color = "#FF6201";
     text.textContent = `${summary.average?.toFixed(1) ?? "-"} (${summary.count})`;
     text.style.color = "#111";
     text.style.fontWeight = "500";
   }
-  chip.append(star, text);
+  chip.append(buildStars(rated ? (summary.average as number) : null, 12), text);
 }
 
 async function fetchMissing(ids: number[]): Promise<void> {

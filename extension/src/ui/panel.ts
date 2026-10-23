@@ -1,5 +1,6 @@
 import type { ApiReview } from "../shared/types";
 import { api, type MutationResult } from "./api";
+import { buildStars } from "./stars";
 
 /**
  * BOOTH ページに差し込むレビューパネル。
@@ -445,38 +446,31 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
   badge.type = "button";
   badge.className = "brb-root";
   badge.setAttribute("aria-label", "全レビュー評価へ移動");
-  const star = document.createElement("span");
-  star.className = "brb-star";
-  star.textContent = "★";
+  const starRow = buildStars(null, 14);
   const label = document.createElement("span");
   label.className = "brb-label";
   label.textContent = "読み込み中…";
-  badge.append(star, label);
+  badge.append(starRow, label);
   shadowRoot.append(style, badge);
 
   void (async () => {
     const res =
       target.kind === "item" ? await api.summary(target.itemId) : await api.shopSummary(target.shop);
     if (!res.ok) {
-      badge.replaceChildren();
-      const s = document.createElement("span");
-      s.className = "brb-star";
-      s.textContent = "★";
-      const l = document.createElement("span");
-      l.className = "brb-label";
-      l.textContent = "レビュー";
-      badge.append(s, l);
+      badge.replaceChildren(buildStars(null, 14), label);
+      label.className = "brb-label";
+      label.textContent = "レビュー";
       return;
     }
     const { count, average } = res.data;
     if (count === 0) {
-      star.className = "brb-star brb-none";
+      badge.replaceChildren(buildStars(null, 14), label);
       label.className = "brb-label brb-none";
       label.textContent = "(0)";
       return;
     }
-    // 平均は黒字・★はオレンジ (#FF6201)・件数は (n) のみ (簡素なUI)
-    star.className = "brb-star";
+    // 5個の星を評価値ぶん塗りつぶし。平均は黒字・件数は (n) (簡素なUI)
+    badge.replaceChildren(buildStars(average, 14), label);
     label.className = "brb-label";
     label.textContent = `${average?.toFixed(1) ?? "-"} (${count})`;
   })();
@@ -501,7 +495,7 @@ const BADGE_CSS = `
     all: initial;
     display: inline-flex;
     align-items: center;
-    gap: 3px;
+    gap: 4px;
     cursor: pointer;
     color: #111;
     background: none;
@@ -514,11 +508,5 @@ const BADGE_CSS = `
     line-height: 1.4;
     text-align: left;
   }
-  .brb-star {
-    color: #FF6201;
-    line-height: 1.2;
-  }
-  .brb-none .brb-star,
-  .brb-star.brb-none { color: #b3ada2; }
   .brb-label.brb-none { color: #999; }
 `;

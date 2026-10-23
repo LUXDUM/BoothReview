@@ -3,9 +3,11 @@ import {
   extractShopFromUrl,
   findMountAnchor,
   findShopBadgeAnchor,
+  findItemBadgeAnchor,
   findBottomMountAnchor,
   attachPanelHost,
   attachBadgeHost,
+  attachBadgeHostAfter,
   isShopPage,
 } from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
@@ -40,10 +42,17 @@ export default defineContentScript({
     let badge: PanelHandle | null = null;
 
     function mountItem(itemId: number): void {
-      // ☆バッジ (商品ページも上部に配置。押すと下までスクロール)
-      const badgeAnchor = findMountAnchor(document);
-      if (badgeAnchor) {
-        const badgeHost = attachBadgeHost(document, badgeAnchor);
+      // ☆チップ: 商品ページはショップ名の横 (カートボタンの付近) に配置。
+      // 見つからない場合は従来どおりページ最上部 (main 等) の前へ
+      const itemBadgeAnchor = findItemBadgeAnchor(document);
+      let badgeHost: HTMLElement | null = null;
+      if (itemBadgeAnchor) {
+        badgeHost = attachBadgeHostAfter(document, itemBadgeAnchor);
+      } else {
+        const fallbackAnchor = findMountAnchor(document);
+        if (fallbackAnchor) badgeHost = attachBadgeHost(document, fallbackAnchor);
+      }
+      if (badgeHost) {
         const badgeRoot = badgeHost.shadowRoot ?? badgeHost.attachShadow({ mode: "open" });
         badge = mountBadge({ shadowRoot: badgeRoot, target: { kind: "item", itemId } });
       }

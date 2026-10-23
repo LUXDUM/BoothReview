@@ -432,7 +432,7 @@ export type BadgeHandle = { destroy(): void };
 type BadgeTarget = { kind: "item"; itemId: number } | { kind: "shop"; shop: string };
 
 /**
- * ページ最上部の「全体評価 ☆バッジ」 (商品・ショップ共通)。
+ * 「全体評価 ☆チップ」 (商品: ショップ名の横 / ショップ: ページ最上部)。
  * 押すとページ下部のレビュー一覧までスクロールする。
  */
 export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }): BadgeHandle {
@@ -444,19 +444,41 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
   const badge = document.createElement("button");
   badge.type = "button";
   badge.className = "brb-root";
-  badge.textContent = "☆ 読み込み中…";
   badge.setAttribute("aria-label", "全レビュー評価へ移動");
+  const star = document.createElement("span");
+  star.className = "brb-star";
+  star.textContent = "☆";
+  const label = document.createElement("span");
+  label.className = "brb-label";
+  label.textContent = "読み込み中…";
+  badge.append(star, label);
   shadowRoot.append(style, badge);
 
   void (async () => {
     const res =
       target.kind === "item" ? await api.summary(target.itemId) : await api.shopSummary(target.shop);
     if (!res.ok) {
-      badge.textContent = "☆ レビュー";
+      badge.replaceChildren();
+      const s = document.createElement("span");
+      s.className = "brb-star";
+      s.textContent = "☆";
+      const l = document.createElement("span");
+      l.className = "brb-label";
+      l.textContent = "レビュー";
+      badge.append(s, l);
       return;
     }
     const { count, average } = res.data;
-    badge.textContent = count === 0 ? "☆ レビューなし" : `★ ${average ?? "-"} (${count}件)`;
+    if (count === 0) {
+      star.className = "brb-star brb-none";
+      label.className = "brb-label brb-none";
+      label.textContent = "(0)";
+      return;
+    }
+    // 平均は黒字・☆はオレンジ (#FF6201)・件数は (n) のみ (簡素なUI)
+    star.className = "brb-star";
+    label.className = "brb-label";
+    label.textContent = `${average?.toFixed(1) ?? "-"} (${count})`;
   })();
 
   badge.addEventListener("click", () => {
@@ -477,16 +499,26 @@ export function mountBadge(deps: { shadowRoot: ShadowRoot; target: BadgeTarget }
 const BADGE_CSS = `
   .brb-root {
     all: initial;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     cursor: pointer;
-    border: 1px solid #e0a013;
-    color: #8a5b00;
-    background: #fff8e6;
-    border-radius: 999px;
-    padding: 4px 14px;
+    color: #111;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
     font-size: 14px;
-    font-weight: 600;
-    margin: 6px 0;
+    font-weight: 500;
+    line-height: 1.4;
+    text-align: left;
   }
+  .brb-star {
+    color: #FF6201;
+    line-height: 1.2;
+  }
+  .brb-none .brb-star,
+  .brb-star.brb-none { color: #b3ada2; }
+  .brb-label.brb-none { color: #999; }
 `;

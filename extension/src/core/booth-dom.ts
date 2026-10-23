@@ -125,6 +125,17 @@ export function findShopBadgeAnchor(doc: Document): Element | null {
   return null;
 }
 
+/**
+ * 商品ページの☆チップを置くアンカー: ショップ名 (.shop-card__shop-name)。
+ * 実機 2026-11: 右カラムの購入エリア直上のショップカード
+ *   .shop-card__box > .shop-card__box-footer > .shop-card__owner-info (flex)
+ *     > .shop-card__avatar + .shop-card__shop-name
+ * のオーナー情報に「ショップ名の横」(カートボタンの付近) でインライン配置する。
+ */
+export function findItemBadgeAnchor(doc: Document): Element | null {
+  return doc.querySelector(".shop-card__shop-name");
+}
+
 /** Magic DOM 中へ挿入するパネルホスト要素を作る */
 export function createPanelHostId(): string {
   return "boothreview-panel-host";
@@ -133,6 +144,20 @@ export function createPanelHostId(): string {
 /** ショップページの「全体評価 ☆バッジ」用ホストID */
 export function createBadgeHostId(): string {
   return "boothreview-badge-host";
+}
+
+/** バッジホストの取得/生成 (hosts は既存があれば再利用) */
+function ensureBadgeHost(doc: Document): HTMLElement {
+  const hostId = createBadgeHostId();
+  let host = doc.getElementById(hostId);
+  if (!host) {
+    host = doc.createElement("div");
+    host.id = hostId;
+    for (const [prop, value] of Object.entries(PANEL_HOST_ID_STYLES)) {
+      host.style.setProperty(propToKebab(prop), value);
+    }
+  }
+  return host;
 }
 
 const PANEL_HOST_ID_STYLES = {
@@ -161,20 +186,34 @@ export function attachPanelHost(doc: Document, anchor: Element): HTMLElement {
 
 /** ショップページの☆バッジ用ホスト (パネルホストと別にする。バッジは先に消えないよう常設) */
 export function attachBadgeHost(doc: Document, anchor: Element): HTMLElement {
-  const hostId = createBadgeHostId();
-  let host = doc.getElementById(hostId);
-  if (!host) {
-    host = doc.createElement("div");
-    host.id = hostId;
-    for (const [prop, value] of Object.entries(PANEL_HOST_ID_STYLES)) {
-      host.style.setProperty(propToKebab(prop), value);
-    }
-    if (anchor.parentElement) {
-      anchor.parentElement.insertBefore(host, anchor);
-    } else {
-      doc.body.appendChild(host);
+  const host = ensureBadgeHost(doc);
+  if (!host.parentElement && anchor.parentElement) {
+    anchor.parentElement.insertBefore(host, anchor);
+  }
+  return host;
+}
+
+/**
+ * 商品ページの☆チップ用ホスト: anchor (ショップ名) の「直後」に挿入。
+ * ショップ名の横に並べるため inline-flex + 左余白を付ける。
+ */
+export function attachBadgeHostAfter(doc: Document, anchor: Element): HTMLElement {
+  const host = ensureBadgeHost(doc);
+  if (anchor.parentElement) {
+    if (!host.parentElement || host.parentElement !== anchor.parentElement ||
+        host.previousElementSibling !== anchor) {
+      if (anchor.nextSibling) {
+        anchor.parentElement.insertBefore(host, anchor.nextSibling);
+      } else {
+        anchor.parentElement.appendChild(host);
+      }
     }
   }
+  const ds = host.style;
+  ds.display = "inline-flex";
+  ds.alignItems = "center";
+  ds.marginLeft = "8px";
+  ds.verticalAlign = "middle";
   return host;
 }
 

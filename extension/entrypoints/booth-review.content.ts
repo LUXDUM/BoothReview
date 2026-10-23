@@ -176,13 +176,30 @@ export default defineContentScript({
         banner.id = "boothreview-debug-banner";
         banner.style.cssText =
           "position:fixed;left:8px;bottom:8px;z-index:2147483647;background:#173a5e;color:#fff;" +
-          "padding:6px 10px;border-radius:6px;font:12px ui-monospace,monospace;pointer-events:none;";
+          "padding:6px 10px;border-radius:6px;font:12px ui-monospace,monospace;pointer-events:none;" +
+          "max-width:340px;white-space:normal;";
         document.body.appendChild(banner);
       }
       const chips = document.querySelectorAll("[data-br-rating-chip]").length;
+      // 見えている商品アンカーの「最寄りカードコンテナ」のクラス内訳 (どのマークアップに対応不足かを可視化)
+      const hist = new Map<string, number>();
+      let totalAnchors = 0;
+      for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="/items/"]')) {
+        totalAnchors++;
+        const card = a.closest<HTMLElement>('.item-card, .item-card-wrapper, [class*="item-card"], [class*="card"]');
+        const key = card ? (Array.from(card.classList)[0] ?? "?") : "(card要素なし)";
+        hist.set(key, (hist.get(key) ?? 0) + 1);
+      }
+      const histText = Array.from(hist.entries())
+        .sort((x, y) => y[1] - x[1])
+        .slice(0, 5)
+        .map(([k, v]) => `${k}:${v}`)
+        .join(" ");
       banner.textContent =
         `BRチップ ${chips} / 検出カード ${listingStats.cardsFound} / id ${listingStats.idsFound} / ` +
-        `API ${listingStats.apiOk ? "OK" : "NG"}:${listingStats.apiStatus}`;
+        `API ${listingStats.apiOk ? "OK" : "NG"}:${listingStats.apiStatus}\n` +
+        `anchor ${totalAnchors} 区分→ ${histText}`;
+      banner.style.whiteSpace = "pre-wrap";
     }
 
     sync();

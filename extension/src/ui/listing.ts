@@ -33,6 +33,17 @@ const cache = new Map<number, ChipSummary>();
 /** 取得中の itemId (並発リクエスト防止) */
 const inflight = new Set<number>();
 
+/** #brdebug 用の診断値 (content script から参照してバナー表示する) */
+export const listingStats = {
+  /** 最終走査で検出したカード数 (title も見つかったもの) */
+  cardsFound: 0,
+  /** 最終走査で item がリンク付きとして認識された数 (ページ内ユニーク id) */
+  idsFound: 0,
+  /** 最後の ratings API の状態 */
+  apiStatus: 0 as number,
+  apiOk: false as boolean,
+};
+
 export type RatingChipHandle = { destroy(): void };
 
 function itemIdFromAnchor(anchor: HTMLAnchorElement): number | null {
@@ -124,6 +135,8 @@ async function fetchMissing(ids: number[]): Promise<void> {
     for (let i = 0; i < missing.length; i += BATCH_SIZE) {
       const batch = missing.slice(i, i + BATCH_SIZE);
       const res = await api.ratings(batch);
+      listingStats.apiStatus = res.status;
+      listingStats.apiOk = res.ok;
       for (const id of batch) {
         inflight.delete(id);
         const found = res.ok ? res.data.ratings[String(id)] : undefined;
@@ -150,17 +163,25 @@ async function fetchMissing(ids: number[]): Promise<void> {
  */
 export function scanListingChips(doc: Document): void {
   const anchors = doc.querySelectorAll<HTMLAnchorElement>('a[href*="/items/"]');
-  if (anchors.length === 0) return;
+  if (anchors.length === 0) {
+    listingStats.idsFound = 0;
+    listingStats.cardsFound = 0;
+    return;
+  }
 
   /** card → (title, itemId)。1 カードに画像/タイトル等の複数アンカーがあっても 1 チップにまとめる */
   const targets = new Map<HTMLElement, { id: number; title: HTMLElement }>();
+  const ids = new Set<number>();
   for (const anchor of anchors) {
     const id = itemIdFromAnchor(anchor);
     if (id === null) continue;
+    ids.add(id);
     const t = cardTargetOf(anchor);
     if (!t) continue;
     if (!targets.has(t.card)) targets.set(t.card, { id, title: t.title });
   }
+  listingStats.idsFound = ids.size;
+  listingStats.cardsFound = targets.size;
   if (targets.size === 0) return;
 
   void (async () => {

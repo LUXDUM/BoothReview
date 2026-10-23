@@ -10,7 +10,7 @@ import {
 } from "../src/core/booth-dom";
 import { getOrCreateAnonId } from "../src/core/anon-id";
 import { mountPanel, mountBadge, type PanelHandle } from "../src/ui/panel";
-import { scanListingChips } from "../src/ui/listing";
+import { scanListingChips, listingStats } from "../src/ui/listing";
 import { API_ORIGIN } from "../src/shared/config";
 
 /**
@@ -97,6 +97,7 @@ export default defineContentScript({
       // 全ページ共通: 一覧カード (.item-card) に評価チップを挿入
       // (ホーム/検索 だけでなく、ショップの新着一覧や商品ページ下部の関連カードにも出る)
       scanListingChips(document);
+      updateDebugBanner();
 
       const itemId = extractItemIdFromUrl(location.href);
       if (itemId !== null) {
@@ -149,6 +150,8 @@ export default defineContentScript({
       }
 
       if (mountedTarget !== null) unmount();
+
+      updateDebugBanner();
     }
 
     /** 再マウント・ループの自励発振を防ぐ: BOOTH 読込中に毎秒 destroy/rebuild しない */
@@ -159,6 +162,27 @@ export default defineContentScript({
       if (now - lastRemountAt < REMOUNT_COOLDOWN_MS) return false;
       lastRemountAt = now;
       return true;
+    }
+
+    /**
+     * デバッグバナー (#brdebug を URL 末尾に付けると表示)。
+     * 一覧チップの問題を切り分けるための簡易測定 (一般ユーザーへの影響は無し)。
+     */
+    function updateDebugBanner(): void {
+      if (!location.hash.startsWith("#brdebug")) return;
+      let banner = document.getElementById("boothreview-debug-banner") as HTMLDivElement | null;
+      if (!banner) {
+        banner = document.createElement("div");
+        banner.id = "boothreview-debug-banner";
+        banner.style.cssText =
+          "position:fixed;left:8px;bottom:8px;z-index:2147483647;background:#173a5e;color:#fff;" +
+          "padding:6px 10px;border-radius:6px;font:12px ui-monospace,monospace;pointer-events:none;";
+        document.body.appendChild(banner);
+      }
+      const chips = document.querySelectorAll("[data-br-rating-chip]").length;
+      banner.textContent =
+        `BRチップ ${chips} / 検出カード ${listingStats.cardsFound} / id ${listingStats.idsFound} / ` +
+        `API ${listingStats.apiOk ? "OK" : "NG"}:${listingStats.apiStatus}`;
     }
 
     sync();

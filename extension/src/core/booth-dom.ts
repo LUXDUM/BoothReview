@@ -126,14 +126,15 @@ export function findShopBadgeAnchor(doc: Document): Element | null {
 }
 
 /**
- * 商品ページの☆チップを置くアンカー: ショップ名 (.shop-card__shop-name)。
- * 実機 2026-11: 右カラムの購入エリア直上のショップカード
- *   .shop-card__box > .shop-card__box-footer > .shop-card__owner-info (flex)
- *     > .shop-card__avatar + .shop-card__shop-name
- * のオーナー情報に「ショップ名の横」(カートボタンの付近) でインライン配置する。
+ * 商品ページの☆チップを置くアンカー: ショップ名の横のカート円ボタン。
+ * 実機 2026-11: 右カラムのショップ行は div.flex の中に
+ *   a[data-product-list="…to shop_index"] (アバター+ショップ名) と
+ *   a[title="カート"][href*=".booth.pm/cart"] (pixiv-icon Basket の円ボタン) が並ぶ。
+ * ※ ページ下部の「おすすめショップ」カードにも .shop-card__shop-name があるため、
+ *   そのクラスを直接探すと誤配置する → カート円ボタンを最優先で探す。
  */
 export function findItemBadgeAnchor(doc: Document): Element | null {
-  return doc.querySelector(".shop-card__shop-name");
+  return doc.querySelector("a[href$='.booth.pm/cart']");
 }
 
 /** Magic DOM 中へ挿入するパネルホスト要素を作る */
@@ -212,8 +213,8 @@ export function attachBadgeHostAfter(doc: Document, anchor: Element): HTMLElemen
   const ds = host.style;
   ds.display = "inline-flex";
   ds.alignItems = "center";
-  ds.marginLeft = "8px";
-  ds.verticalAlign = "middle";
+  ds.flexShrink = "0";
+  ds.marginLeft = "4px";
   return host;
 }
 

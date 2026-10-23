@@ -79,19 +79,37 @@ function applyChip(card: HTMLElement, title: HTMLElement, summary: ChipSummary |
 
 function updateChipText(chip: HTMLElement, summary: ChipSummary | undefined): void {
   chip.textContent = "";
+  // BOOTH 側 CSS に左右されないよう inline style のバッジ型にする (ShadowRoot 併用は1頁100件で重い)
+  chip.style.display = "flex";
+  chip.style.alignItems = "center";
+  chip.style.gap = "3px";
+  chip.style.margin = "3px 0";
+  chip.style.padding = "2px 8px";
+  chip.style.width = "fit-content";
+  chip.style.borderRadius = "10px";
+  chip.style.fontSize = "12px";
+  chip.style.lineHeight = "1.4";
+  chip.style.fontFamily = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
   const star = document.createElement("span");
-  star.textContent = "☆";
-  star.style.color = "#b9b3a8";
+  star.style.fontSize = "13px";
   const text = document.createElement("span");
-  text.style.color = "#8a7f6d";
   if (!summary || summary.count === 0) {
-    text.textContent = " レビューなし";
+    // レビュー無し: 控えめだが「UIがある」と分かる薄いピル
+    star.textContent = "☆";
+    star.style.color = "#b3ada2";
+    text.textContent = "レビュー 0件";
+    text.style.color = "#a09a90";
+    chip.style.background = "#f4f3f0";
+    chip.style.border = "1px solid #e6e3dd";
   } else {
     star.textContent = "★";
     star.style.color = "#e8a013";
-    text.textContent = ` ${summary.average?.toFixed(1) ?? "-"} (${summary.count}件)`;
+    text.textContent = `${summary.average?.toFixed(1) ?? "-"} (${summary.count}件)`;
     text.style.color = "#8a5b00";
     text.style.fontWeight = "700";
+    chip.style.background = "#fff6de";
+    chip.style.border = "1px solid #f0d791";
   }
   chip.append(star, text);
 }

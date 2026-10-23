@@ -22,6 +22,15 @@ export type Summary = { reviewCount: number; ratingSum: number };
 
 export type OwnLookup = { found: boolean; owned: boolean; review: ReviewRecord | null };
 
+/** 投稿禁止 (BAN) の記録。管理ダッシュボードの一覧と解除に使う */
+export type AuthorBlockRecord = {
+  authorHash: string;
+  reason: string | null;
+  createdAt: Date;
+  /** BAN解除の参照用に、この匿名IDのレビュー1件のID (レビューがない場合は null) */
+  sampleReviewId: number | null;
+};
+
 export type ReviewRepository = {
   /** DB到達確認 (healthz) */
   ping(): Promise<void>;
@@ -92,6 +101,16 @@ export type ReviewRepository = {
    * ルート層で付与するためここには含めない。
    */
   adminStats(): Promise<AdminStatsData>;
+
+  /** 投稿禁止リスト (作成日時の新しい順) */
+  listAuthorBlocks(): Promise<AuthorBlockRecord[]>;
+
+  isAuthorBlocked(authorHashHex: string): Promise<boolean>;
+
+  /** 登録済みでも上書きしない。戻り値は「本次新規に登録したか」 */
+  blockAuthor(authorHashHex: string, reason: string | null): Promise<boolean>;
+
+  unblockAuthor(authorHashHex: string): Promise<boolean>;
 };
 
 export type AdminListFilter = {

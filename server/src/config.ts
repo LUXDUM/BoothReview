@@ -40,6 +40,8 @@ const envSchema = z.object({
   // 一定数以上の通報で自動非表示になる閾値
   REPORT_AUTOHIDE_THRESHOLD: z.coerce.number().int().positive().default(5),
   RATE_LIMIT_POST_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(10),
+  // バースト対策: 直近5分での投稿数 (荒らしの短時間連投を止める)
+  RATE_LIMIT_POST_PER_IP_PER_5MIN: z.coerce.number().int().positive().default(2),
   RATE_LIMIT_POST_PER_ANON_PER_HOUR: z.coerce.number().int().positive().default(5),
   RATE_LIMIT_REPORT_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(20),
   RATE_LIMIT_REPORT_PER_ANON_PER_HOUR: z.coerce.number().int().positive().default(10),
@@ -68,6 +70,7 @@ export type Config = {
   reportAutoHideThreshold: number;
   rateLimits: {
     postPerIpPerHour: number;
+    postPerIpPer5Min: number;
     postPerAnonPerHour: number;
     reportPerIpPerHour: number;
     reportPerAnonPerHour: number;
@@ -107,6 +110,7 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
     reportAutoHideThreshold: e.REPORT_AUTOHIDE_THRESHOLD,
     rateLimits: {
       postPerIpPerHour: e.RATE_LIMIT_POST_PER_IP_PER_HOUR,
+      postPerIpPer5Min: e.RATE_LIMIT_POST_PER_IP_PER_5MIN,
       postPerAnonPerHour: e.RATE_LIMIT_POST_PER_ANON_PER_HOUR,
       reportPerIpPerHour: e.RATE_LIMIT_REPORT_PER_IP_PER_HOUR,
       reportPerAnonPerHour: e.RATE_LIMIT_REPORT_PER_ANON_PER_HOUR,

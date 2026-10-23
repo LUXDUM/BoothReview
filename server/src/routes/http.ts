@@ -20,16 +20,23 @@ import {
 } from "../lib/validation.js";
 import { authorHash } from "../lib/hash.js";
 import { extractClientIp } from "../lib/ip.js";
+import { assertBodyAllowed, createRepostGuard, type RepostGuard } from "../lib/moderation.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
+const FIVE_MIN_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 64 * 1024;
+
+/** BAN 匿名ID向けのエラー文言 (拡張機能のフォームにそのまま表示される) */
+const BANNED_MESSAGE = "この匿名IDは管理者により投稿が禁止されています";
 
 export type AppDeps = {
   config: Config;
   repo: ReviewRepository;
   limiter: RateLimiter;
   logger: Logger;
+  /** 同一本文連投の判定 (省略時は実時間のインメモリ実装)。テストで時計を差し替える */
+  repostGuard?: RepostGuard;
 };
 
 type PublicReview = {
@@ -141,6 +148,8 @@ export function createApp(deps: AppDeps): Hono {
 
   const bodySchema = createBodySchema(config);
   const perPageSchema = createPerPageSchema(config);
+  // 同一本文連投の判定 (メモリ内。プロセス再起動でリセット)
+  const repostGuard = deps.repostGuard ?? createRepostGuard();
 
   const app = new Hono();
 
@@ -383,11 +392,6 @@ export function createApp(deps: AppDeps): Hono {
 
   app.post("/v1/items/:itemId/reviews", async (c) => {
     const itemId = await numericParam(c, "itemId");
-    limitOrThrow(
-      ipBucketKey("post", c),
-      config.rateLimits.postPerIpPerHour,
-      HOUR_MS,
-    );
     const input = parseWith(
       z.object({
         rating: ratingSchema,
@@ -399,11 +403,29 @@ export function createApp(deps: AppDeps): Hono {
       await readJson(c),
     );
     const hash = authorHash(config.pepper, input.anonId);
+    // BAN 照合 (投稿禁止の匿名IDは新規投稿/更新ともに 403)
+    if (await repo.isAuthorBlocked(hash)) throw Errors.forbidden(BANNED_MESSAGE);
     limitOrThrow(
       `post:anon:${hash}`,
       config.rateLimits.postPerAnonPerHour,
       HOUR_MS,
     );
+
+    // 自分のレビューの書き直し (upsert の更新経路) はバースト制限・連投判定の対象外
+    const existing = await repo.findReviewByAuthor(itemId, hash);
+    if (!existing) {
+      // バースト対策: 直近5分に同一IPから新規投稿ばかり来るのを止める
+      limitOrThrow(ipBucketKey("post5", c), config.rateLimits.postPerIpPer5Min, FIVE_MIN_MS);
+      limitOrThrow(
+        ipBucketKey("post", c),
+        config.rateLimits.postPerIpPerHour,
+        HOUR_MS,
+      );
+      repostGuard.assertNotRepost(hash, input.body);
+    }
+
+    // 本文の機械的スパム判定 (URL 数上限) は更新時も適用する
+    assertBodyAllowed(input.body);
 
     const { review, created } = await repo.upsertReview({
       itemId,
@@ -412,6 +434,7 @@ export function createApp(deps: AppDeps): Hono {
       body: input.body,
       shop: input.shop,
     });
+    repostGuard.record(hash, review.body);
     return c.json({ review: toPublic(review), created }, created ? 201 : 200);
   });
 
@@ -419,6 +442,8 @@ export function createApp(deps: AppDeps): Hono {
     const id = await numericParam(c, "id");
     const anonId = requireAnonHeader(c);
     const hash = authorHash(config.pepper, anonId);
+    // BAN 照合 (書き込みはすべて禁止。自分のレビューの削除のみ DELETE で可能にしてある)
+    if (await repo.isAuthorBlocked(hash)) throw Errors.forbidden(BANNED_MESSAGE);
     const input = parseWith(
       z
         .object({
@@ -433,6 +458,10 @@ export function createApp(deps: AppDeps): Hono {
         ),
       await readJson(c),
     );
+    if (input.body !== undefined) {
+      assertBodyAllowed(input.body);
+      repostGuard.assertNotRepost(hash, input.body);
+    }
     const res = await repo.updateOwnReview(id, hash, {
       rating: input.rating,
       body: input.body,
@@ -440,6 +469,7 @@ export function createApp(deps: AppDeps): Hono {
     });
     if (!res.found) throw Errors.notFound();
     if (!res.owned) throw Errors.forbidden();
+    if (res.owned && input.body !== undefined) repostGuard.record(hash, input.body);
     return c.json({ review: res.review ? toPublic(res.review) : null });
   });
 
@@ -465,6 +495,8 @@ export function createApp(deps: AppDeps): Hono {
       await readJson(c),
     );
     const hash = authorHash(config.pepper, input.anonId);
+    // BAN 照合 (禁止された匿名IDの通報は自動hiddenの閾値に影響させない)
+    if (await repo.isAuthorBlocked(hash)) throw Errors.forbidden(BANNED_MESSAGE);
     limitOrThrow(
       `report:anon:${hash}`,
       config.rateLimits.reportPerAnonPerHour,
@@ -593,6 +625,54 @@ export function createApp(deps: AppDeps): Hono {
     });
   });
 
+  // --- 投稿禁止 (BAN) 管理 ---
+  // 匿名IDのフルハッシュはAPIに一切出さない方針のため、追加/解除ともに
+  // 「対象レビューの ID」経由で匿名IDを参照する。
+
+  app.get("/v1/admin/blocks", async (c) => {
+    limitOrThrow(`admin:${clientIp(c) ?? "unknown"}`, config.rateLimits.adminPerIpPerMinute, MINUTE_MS);
+    const blocks = await repo.listAuthorBlocks();
+    return c.json({
+      blocks: blocks.map((b) => ({
+        /** 短縮ハッシュ (管理UIの識別用) */
+        author: b.authorHash.slice(0, 8),
+        reason: b.reason,
+        sampleReviewId: b.sampleReviewId,
+        createdAt: b.createdAt.toISOString(),
+      })),
+      total: blocks.length,
+    });
+  });
+
+  app.post("/v1/admin/blocks", async (c) => {
+    limitOrThrow(`admin:${clientIp(c) ?? "unknown"}`, config.rateLimits.adminPerIpPerMinute, MINUTE_MS);
+    const { reviewId } = parseWith(
+      z.object({ reviewId: z.number().int().positive() }),
+      await readJson(c),
+    );
+    const review = await repo.getReview(reviewId);
+    if (!review) throw Errors.notFound(`review #${reviewId} not found`);
+    const created = await repo.blockAuthor(review.authorHash, `review:${reviewId}`);
+    if (created) {
+      logger.warn({ reviewId, author: review.authorHash.slice(0, 8) }, "author blocked");
+    }
+    return c.json({
+      ok: true,
+      /** 新規登録なら true。すでに禁止済みなら false (冪等) */
+      created,
+      block: { author: review.authorHash.slice(0, 8), reviewId },
+    });
+  });
+
+  app.delete("/v1/admin/blocks/:id", async (c) => {
+    limitOrThrow(`admin:${clientIp(c) ?? "unknown"}`, config.rateLimits.adminPerIpPerMinute, MINUTE_MS);
+    const reviewId = await numericParam(c, "id");
+    const review = await repo.getReview(reviewId);
+    if (!review) throw Errors.notFound(`review #${reviewId} not found`);
+    const removed = await repo.unblockAuthor(review.authorHash);
+    return c.json({ ok: true, removed });
+  });
+
   return app;
 }
 
@@ -682,6 +762,7 @@ const DASHBOARD_HTML = `<!doctype html>
       <div id="smsg" class="muted" style="margin-top:6px; font-size:12px">本文または匿名IDのどちらかを入力してください。匿名IDは拡張機能の「あなたの匿名ID」表示からコピーできます。</div>
       <div id="sresults" style="margin-top:10px"></div>
     </section>
+    <section><h2>投稿禁止 (BAN) リスト</h2><div id="blocks"></div></section>
     <section><h2>レビューの多いアイテム (公開)</h2><div id="items"></div></section>
     <section><h2>サーバー容量</h2><div id="server"></div></section>
   </main>
@@ -806,6 +887,11 @@ const DASHBOARD_HTML = `<!doctype html>
         restore.addEventListener("click", adminPatch(r.id, "published"));
         act.appendChild(restore);
       }
+      // この匿名ID自体を投稿禁止にする (解除は下の BAN リストから)
+      var ban = el("button", "ghost", "禁止");
+      ban.style.marginLeft = "4px";
+      ban.addEventListener("click", adminBan(r.id, r.author));
+      act.appendChild(ban);
       var link = el("a", "", String(r.itemId));
       link.href = "https://booth.pm/ja/items/" + r.itemId;
       link.target = "_blank";
@@ -844,6 +930,84 @@ const DASHBOARD_HTML = `<!doctype html>
         })
         .catch(function (e) { sMsg("更新に失敗: " + e.message, true); });
     };
+  }
+
+  // レビュー行の「禁止」: その匿名IDを投稿禁止に登録する
+  function adminBan(id, author) {
+    return function () {
+      if (!confirm("匿名ID " + author + "… を投稿禁止にしますか?\n(この匿名IDからの投稿・編集・通報がすべて 403 になります)")) return;
+      fetch("/v1/admin/blocks", {
+        method: "POST",
+        headers: { authorization: "Bearer " + sessionStorage.getItem(KEY), "content-type": "application/json" },
+        body: JSON.stringify({ reviewId: id })
+      })
+        .then(function (res) {
+          if (res.status === 401) throw new Error("トークンが違います");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          sMsg("匿名ID " + author + "… を投稿禁止にしました (レビュー #" + id + " 経由)");
+          return loadBlocks();
+        })
+        .catch(function (e) { sMsg("禁止に失敗: " + e.message, true); });
+    };
+  }
+
+  function loadBlocks() {
+    var t = sessionStorage.getItem(KEY);
+    if (!t) return Promise.resolve();
+    return fetch("/v1/admin/blocks", { headers: { authorization: "Bearer " + t } })
+      .then(function (res) {
+        if (res.status === 401) throw new Error("トークンが違います");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(renderBlocks)
+      .catch(function (e) {
+        var wrap = $("blocks");
+        wrap.textContent = "";
+        wrap.append(el("div", "muted", "BAN リストの取得に失敗: " + e.message));
+      });
+  }
+
+  function renderBlocks(d) {
+    var wrap = $("blocks");
+    wrap.textContent = "";
+    if (d.total === 0) { wrap.append(el("div", "muted", "投稿禁止はありません")); return; }
+    var t = el("table");
+    var tr = el("tr");
+    ["匿名ID", "理由", "登録日時", "操作"].forEach(function (h) { tr.append(el("th", "", h)); });
+    t.appendChild(tr);
+    d.blocks.forEach(function (b) {
+      var row = el("tr");
+      var act = el("td");
+      if (b.sampleReviewId !== null) {
+        var un = el("button", "ghost", "解除");
+        un.addEventListener("click", function () {
+          if (!confirm("匿名ID " + b.author + "… の投稿禁止を解除しますか?")) return;
+          fetch("/v1/admin/blocks/" + b.sampleReviewId, {
+            method: "DELETE",
+            headers: { authorization: "Bearer " + sessionStorage.getItem(KEY) }
+          })
+            .then(function (res) {
+              if (res.status === 401) throw new Error("トークンが違います");
+              if (!res.ok) throw new Error("HTTP " + res.status);
+              sMsg("匿名ID " + b.author + "… の投稿禁止を解除しました");
+              return loadBlocks();
+            })
+            .catch(function (e) { sMsg("解除に失敗: " + e.message, true); });
+        });
+        act.appendChild(un);
+      } else {
+        act.append(el("span", "muted", "解除不可 (レビューが無い)"));
+      }
+      row.append(
+        td(b.author, "anonid"),
+        td(b.reason === null ? "―" : b.reason),
+        td(b.createdAt.slice(0, 16).replace("T", " ")),
+        act
+      );
+      t.appendChild(row);
+    });
+    wrap.appendChild(t);
   }
 
   function runSearch(silent) {
@@ -937,6 +1101,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
   function render(d) {
     renderCards(d); renderDist(d); renderTrend(d); renderReported(d); renderItems(d); renderServer(d);
+    loadBlocks();
     $("at").textContent = new Date().toLocaleString() + " 取得";
   }
 

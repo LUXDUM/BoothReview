@@ -42,6 +42,7 @@ export const Errors = {
   forbidden: (message = "you can only modify your own review") =>
     new AppError("FORBIDDEN", message),
   notFound: (message = "review not found") => new AppError("NOT_FOUND", message),
+  conflict: (message = "conflict") => new AppError("CONFLICT", message),
   alreadyReported: () =>
     new AppError("ALREADY_REPORTED", "you have already reported this review"),
   rateLimited: (retryAfterSeconds: number) =>

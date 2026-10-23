@@ -1,7 +1,8 @@
 import { and, avg, count, desc, eq, ilike, inArray, sql } from "drizzle-orm";
 import { NodePgDatabase } from "drizzle-orm/node-postgres";
-import { reports, reviewStats, reviews } from "./schema.js";
+import { authorBlocks, reports, reviewStats, reviews } from "./schema.js";
 import type {
+  AuthorBlockRecord,
   ReviewRecord,
   ReviewRepository,
   ReviewStatus,
@@ -402,6 +403,52 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
         dbSizeBytes,
         tableSizes,
       };
+    },
+    async listAuthorBlocks(): Promise<AuthorBlockRecord[]> {
+      const rows = await db
+        .select({
+          authorHash: authorBlocks.authorHash,
+          reason: authorBlocks.reason,
+          createdAt: authorBlocks.createdAt,
+          // BAN解除の参照用に、この匿名IDのレビュー1件 (最古) の ID を添える
+          sampleReviewId: sql<number | null>`(
+            SELECT MIN(r.id) FROM reviews r WHERE r.author_hash = ${authorBlocks.authorHash}
+          )`,
+        })
+        .from(authorBlocks)
+        .orderBy(desc(authorBlocks.createdAt));
+      return rows.map((r) => ({
+        authorHash: r.authorHash,
+        reason: r.reason,
+        createdAt: r.createdAt,
+        sampleReviewId: r.sampleReviewId === null || r.sampleReviewId === undefined ? null : Number(r.sampleReviewId),
+      }));
+    },
+
+    async isAuthorBlocked(authorHashHex) {
+      const rows = await db
+        .select({ x: authorBlocks.authorHash })
+        .from(authorBlocks)
+        .where(eq(authorBlocks.authorHash, authorHashHex))
+        .limit(1);
+      return rows.length > 0;
+    },
+
+    async blockAuthor(authorHashHex, reason) {
+      const inserted = await db
+        .insert(authorBlocks)
+        .values({ authorHash: authorHashHex, reason })
+        .onConflictDoNothing()
+        .returning({ authorHash: authorBlocks.authorHash });
+      return inserted.length > 0;
+    },
+
+    async unblockAuthor(authorHashHex) {
+      const deleted = await db
+        .delete(authorBlocks)
+        .where(eq(authorBlocks.authorHash, authorHashHex))
+        .returning({ authorHash: authorBlocks.authorHash });
+      return deleted.length > 0;
     },
   };
 }

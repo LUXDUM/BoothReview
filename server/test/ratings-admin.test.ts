@@ -20,6 +20,7 @@ beforeAll(() => {
     PEPPER: "unit-test-pepper-0123456789",
     ADMIN_TOKEN: ADMIN,
     MIN_BODY_LEN: "10",
+    RATE_LIMIT_POST_PER_IP_PER_5MIN: "50",
   });
   const repo = createMemoryRepository();
   deps = { config, repo, limiter: createRateLimiter(), logger: silentLogger };

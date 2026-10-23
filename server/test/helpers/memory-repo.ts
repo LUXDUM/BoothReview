@@ -1,4 +1,5 @@
 import type {
+  AuthorBlockRecord,
   ReviewRecord,
   ReviewRepository,
   ReviewStatus,
@@ -25,6 +26,7 @@ type Row = {
 export type MemoryDb = {
   reviews: Row[];
   reports: Array<{ id: number; reviewId: number; reporterHash: string; createdAt: Date }>;
+  blocks: Array<{ authorHash: string; reason: string | null; createdAt: Date }>;
 };
 
 function clone(r: Row): ReviewRecord {
@@ -41,7 +43,7 @@ function clone(r: Row): ReviewRecord {
   };
 }
 export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewRepository {
-  const db: MemoryDb = { reviews: [], reports: [], ...seed };
+  const db: MemoryDb = { reviews: [], reports: [], blocks: [], ...seed };
   let nextReviewId = db.reviews.reduce((m, r) => Math.max(m, r.id), 0) + 1;
   let nextReportId = db.reports.reduce((m, r) => Math.max(m, r.id), 0) + 1;
 
@@ -281,6 +283,40 @@ export function createMemoryRepository(seed?: Partial<MemoryDb>): ReviewReposito
         dbSizeBytes: null,
         tableSizes: [],
       };
+    },
+
+    async listAuthorBlocks(): Promise<AuthorBlockRecord[]> {
+      return db.blocks
+        .slice()
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .map((b) => {
+          const sample = db.reviews
+            .filter((r) => r.authorHash === b.authorHash)
+            .sort((a, b2) => a.id - b2.id)[0];
+          return {
+            authorHash: b.authorHash,
+            reason: b.reason,
+            createdAt: new Date(b.createdAt),
+            sampleReviewId: sample ? sample.id : null,
+          };
+        });
+    },
+
+    async isAuthorBlocked(authorHashHex) {
+      return db.blocks.some((b) => b.authorHash === authorHashHex);
+    },
+
+    async blockAuthor(authorHashHex, reason) {
+      const existing = db.blocks.find((b) => b.authorHash === authorHashHex);
+      if (existing) return false;
+      db.blocks.push({ authorHash: authorHashHex, reason, createdAt: new Date() });
+      return true;
+    },
+
+    async unblockAuthor(authorHashHex) {
+      const before = db.blocks.length;
+      db.blocks = db.blocks.filter((b) => b.authorHash !== authorHashHex);
+      return db.blocks.length < before;
     },
   };
 }

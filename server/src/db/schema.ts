@@ -61,6 +61,18 @@ export const reports = pgTable(
 );
 
 /**
+ * author_blocks: 投稿禁止 (BAN) リスト。
+ * - reason は管理ダッシュボード由来の参照 (例: "review:<id>") を想定
+ * - 匿名IDのハッシュだけを保存する (生の匿名ID/IPは保存しない)
+ * - 解除は管理ダッシュボードから行う (対象レビューの ID 経由で参照)
+ */
+export const authorBlocks = pgTable("author_blocks", {
+  authorHash: char("author_hash", { length: 64 }).primaryKey(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * review_stats: 集計テーブル。
  * レビュー件数が増えても GET summary が O(1) となるようトリガーでメンテナンスする。
  * (トリガーは migrations の SQL で定義)

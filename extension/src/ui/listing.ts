@@ -39,6 +39,10 @@ export const listingStats = {
   cardsFound: 0,
   /** 最終走査で item がリンク付きとして認識された数 (ページ内ユニーク id) */
   idsFound: 0,
+  /** タイトルが見つからずカード末尾挿入にフォールバックしたカード数 */
+  fallbackCards: 0,
+  /** チップを付けられなかった要素の構造シグネチャ (親チェーン, 重複排除・最大4件) */
+  skipSignatures: [] as string[],
   /** 最後の ratings API の状態 */
   apiStatus: 0 as number,
   apiOk: false as boolean,
@@ -66,6 +70,24 @@ function cardTargetOf(anchor: Element): { card: HTMLElement; title: HTMLElement 
     card.querySelector<HTMLElement>("[class*='item-card__title-anchor']");
   if (!title) return null;
   return { card, title };
+}
+
+/** デバッグバナー用: アンカー周辺の構造シグネチャ (親4段, tag.クラス先頭2個) */
+function anchorSignature(anchor: Element): string {
+  const parts: string[] = [];
+  let el: Element | null = anchor;
+  for (let i = 0; i < 4 && el; i++) {
+    const cls = typeof el.className === "string" ? el.className : (el.getAttribute("class") ?? "");
+    const first = cls
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(".");
+    parts.unshift(`${el.tagName.toLowerCase()}${first ? `.${first}` : ""}`);
+    el = el.parentElement;
+  }
+  return parts.join(" > ");
 }
 
 function applyChip(card: HTMLElement, title: HTMLElement, summary: ChipSummary | undefined): void {
@@ -168,28 +190,82 @@ export function scanListingChips(doc: Document): void {
   if (anchors.length === 0) {
     listingStats.idsFound = 0;
     listingStats.cardsFound = 0;
+    listingStats.fallbackCards = 0;
+    listingStats.skipSignatures.length = 0;
     return;
   }
 
   /** card → (title, itemId)。1 カードに画像/タイトル等の複数アンカーがあっても 1 チップにまとめる */
   const targets = new Map<HTMLElement, { id: number; title: HTMLElement }>();
+  /** タイトル要素が見つからないカード → カード末尾にチップを足すフォールバック */
+  const fallbackTargets = new Map<HTMLElement, { id: number }>();
   const ids = new Set<number>();
+  const signatures = new Set<string>();
   for (const anchor of anchors) {
     const id = itemIdFromAnchor(anchor);
     if (id === null) continue;
     ids.add(id);
     const t = cardTargetOf(anchor);
-    if (!t) continue;
-    if (!targets.has(t.card)) targets.set(t.card, { id, title: t.title });
+    if (t) {
+      if (!targets.has(t.card)) targets.set(t.card, { id, title: t.title });
+      continue;
+    }
+    // タイトル無し → フォールバック対象。カード要素 (.item-card-wrapper 等) があれば末尾に足す
+    const card = anchor.closest<HTMLElement>(".item-card-wrapper");
+    if (card && !targets.has(card)) {
+      if (!fallbackTargets.has(card)) fallbackTargets.set(card, { id });
+    } else {
+      signatures.add(anchorSignature(anchor));
+    }
   }
   listingStats.idsFound = ids.size;
   listingStats.cardsFound = targets.size;
-  if (targets.size === 0) return;
+  listingStats.fallbackCards = fallbackTargets.size;
+  listingStats.skipSignatures = Array.from(signatures).slice(0, 4);
+  if (targets.size === 0 && fallbackTargets.size === 0) {
+    return;
+  }
 
   void (async () => {
-    await fetchMissing(Array.from(targets.values(), (t) => t.id));
+    const allIds = [...targets.values().map((t) => t.id), ...fallbackTargets.values().map((t) => t.id)];
+    await fetchMissing(allIds);
     for (const [card, t] of targets) {
       applyChip(card, t.title, cache.get(t.id));
     }
+    for (const [card, t] of fallbackTargets) {
+      applyChipToEnd(card, t.id, cache.get(t.id));
+    }
   })();
+}
+
+/** タイトル位置が特定できないカード: カード末尾にチップを追加 (既に同 id のチップがあれば位置更新) */
+function applyChipToEnd(card: HTMLElement, itemId: number, summary: ChipSummary | undefined): void {
+  const existing = card.querySelector<HTMLElement>(`[${CHIP_ATTR}]`);
+  if (existing === null) {
+    const chip = document.createElement("div");
+    chip.className = "booth-review-rating-chip";
+    chip.setAttribute(CHIP_ATTR, "");
+    chip.setAttribute(CHIP_RENDERED_ATTR, summary ? `${summary.count}|${summary.average ?? ""}` : "none");
+    updateChipText(chip, summary);
+    card.appendChild(chip);
+    return;
+  }
+  // 既存チップは末尾 keep。カード再描画で末尾でなくなっていないか確認 (違うというのは既に別位置)
+  if (existing.parentElement === card && existing === card.lastElementChild) {
+    const rendered = existing.getAttribute(CHIP_RENDERED_ATTR) ?? "";
+    const next = summary ? `${summary.count}|${summary.average ?? ""}` : "none";
+    if (rendered !== next) {
+      existing.setAttribute(CHIP_RENDERED_ATTR, next);
+      updateChipText(existing, summary);
+    }
+    return;
+  }
+  // 位置がずれた (BOOTH 再描画で要素が増えた) → 掃して付け直し
+  existing.remove();
+  const chip = document.createElement("div");
+  chip.className = "booth-review-rating-chip";
+  chip.setAttribute(CHIP_ATTR, "");
+  chip.setAttribute(CHIP_RENDERED_ATTR, summary ? `${summary.count}|${summary.average ?? ""}` : "none");
+  updateChipText(chip, summary);
+  card.appendChild(chip);
 }

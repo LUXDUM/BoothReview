@@ -196,9 +196,12 @@ export default defineContentScript({
         .map(([k, v]) => `${k}:${v}`)
         .join(" ");
       banner.textContent =
-        `BRチップ ${chips} / 検出カード ${listingStats.cardsFound} / id ${listingStats.idsFound} / ` +
-        `API ${listingStats.apiOk ? "OK" : "NG"}:${listingStats.apiStatus}\n` +
-        `anchor ${totalAnchors} 区分→ ${histText}`;
+        `BRチップ ${chips} / 検出カード ${listingStats.cardsFound} / 末尾 ${listingStats.fallbackCards} / ` +
+        `id ${listingStats.idsFound} / API ${listingStats.apiOk ? "OK" : "NG"}:${listingStats.apiStatus}\n` +
+        `anchor ${totalAnchors} 区分→ ${histText}\n` +
+        (listingStats.skipSignatures.length > 0
+          ? `シグネチャ→ ${listingStats.skipSignatures.join("  ||  ")}`
+          : "シグネチャ→ (なし: 全カード検出)");
       banner.style.whiteSpace = "pre-wrap";
     }
 

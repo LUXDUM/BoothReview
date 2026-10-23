@@ -935,7 +935,7 @@ const DASHBOARD_HTML = `<!doctype html>
   // レビュー行の「禁止」: その匿名IDを投稿禁止に登録する
   function adminBan(id, author) {
     return function () {
-      if (!confirm("匿名ID " + author + "… を投稿禁止にしますか?\n(この匿名IDからの投稿・編集・通報がすべて 403 になります)")) return;
+      if (!confirm("匿名ID " + author + "… を投稿禁止にしますか?\\n(この匿名IDからの投稿・編集・通報がすべて 403 になります)")) return;
       fetch("/v1/admin/blocks", {
         method: "POST",
         headers: { authorization: "Bearer " + sessionStorage.getItem(KEY), "content-type": "application/json" },

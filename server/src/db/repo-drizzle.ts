@@ -410,9 +410,10 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           authorHash: authorBlocks.authorHash,
           reason: authorBlocks.reason,
           createdAt: authorBlocks.createdAt,
-          // BAN解除の参照用に、この匿名IDのレビュー1件 (最古) の ID を添える
+          // BAN解除の参照用に、この匿名IDのレビュー1件 (最古) の ID を添える。
+          // 注意: sql テンプレート内の列補間はテーブル名が失われるため、相関は生テーブル名で書く
           sampleReviewId: sql<number | null>`(
-            SELECT MIN(r.id) FROM reviews r WHERE r.author_hash = ${authorBlocks.authorHash}
+            SELECT MIN(r.id) FROM reviews r WHERE r.author_hash = author_blocks.author_hash
           )`,
         })
         .from(authorBlocks)

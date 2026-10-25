@@ -259,6 +259,7 @@ export function createDrizzleRepository(db: Db): ReviewRepository {
           authorHash: reviews.authorHash,
           rating: reviews.rating,
           body: reviews.body,
+          shop: reviews.shop,
           status: reviews.status,
           hiddenReason: reviews.hiddenReason,
           createdAt: reviews.createdAt,

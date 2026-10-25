@@ -8,6 +8,7 @@ import { silentLogger } from "./helpers/logger.js";
 
 const A = "c9bf9e57-1685-4c89-bafb-ffb5c70f1f2d";
 const B = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6";
+const C = "77a3e5c9-1e3f-4f6a-9a1b-2c3d4e5f6a7b";
 
 let deps: AppDeps;
 let app: ReturnType<typeof createApp>;
@@ -392,6 +393,76 @@ describe("admin API", () => {
       body: JSON.stringify({ status: "deleted" }),
     });
     expect((await del.json()).review.status).toBe("deleted");
+  });
+
+  it("lists all reviews in time order (newest first) without any filter", async () => {
+    // 3件投稿 (同時刻対策で別商品・別匿名IDにする) → 一覧の先頭に来る
+    const created: number[] = [];
+    const posts = [
+      { itemId: 771, anonId: A, rating: 5, body: "とても素晴らしい商品でした", shop: "testshop" },
+      { itemId: 772, anonId: B, rating: 1, body: "残念な点が目立った商品でした", shop: undefined },
+      { itemId: 773, anonId: C, rating: 3, body: "まあまあの出来栄えでした", shop: undefined },
+    ];
+    for (const p of posts) {
+      const res = await app.request(`/v1/items/${p.itemId}/reviews`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: p.rating, body: p.body, anonId: p.anonId, shop: p.shop }),
+      });
+      expect(res.status).toBe(201);
+      created.push((await res.json()).review.id as number);
+    }
+
+    const res = await app.request("/v1/admin/reviews?page=1&perPage=50", {
+      headers: { authorization: "Bearer unit-test-admin-token-0123456789" },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // 全件 = フィルタ無し (status指定なし) でも削除済みまで含む
+    expect(data.total).toBeGreaterThanOrEqual(created.length);
+    // createdAt (同刻は id) の降順。APIが返した先頭から順に
+    const times = (data.reviews as Array<{ createdAt: string; id: number }>).map((r) => r.createdAt);
+    const sorted = [...times].sort().reverse();
+    expect(times).toEqual(sorted);
+    // 作成した3件が全て含まれ、shop も返る
+    const mine = data.reviews.filter((r: { id: number }) => created.includes(r.id));
+    expect(mine).toHaveLength(created.length);
+    expect(mine.every((r: { shop: string | null }) => typeof r.shop === "string" || r.shop === null)).toBe(true);
+    expect(mine.find((r: { id: number }) => r.id === created[0])?.shop).toBe("testshop");
+  });
+
+  it("supports pagination over the full list", async () => {
+    // この describe は beforeEach で空のメモリリポジトリになるため、ここで3件作る
+    for (const p of [
+      { itemId: 881, anonId: A },
+      { itemId: 882, anonId: B },
+      { itemId: 883, anonId: C },
+    ]) {
+      const res = await app.request(`/v1/items/${p.itemId}/reviews`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rating: 4, body: "動作確認用のレビューです", anonId: p.anonId }),
+      });
+      expect(res.status).toBe(201);
+    }
+
+    const res = await app.request("/v1/admin/reviews?page=1&perPage=2", {
+      headers: { authorization: "Bearer unit-test-admin-token-0123456789" },
+    });
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.perPage).toBe(2);
+    expect(data.reviews).toHaveLength(2);
+    expect(data.totalPages).toBe(2);
+
+    const res2 = await app.request("/v1/admin/reviews?page=2&perPage=2", {
+      headers: { authorization: "Bearer unit-test-admin-token-0123456789" },
+    });
+    const data2 = await res2.json();
+    expect(data2.reviews).toHaveLength(1);
+    // 1ページ目と2ページ目で id が重複しない
+    const ids1 = data.reviews.map((r: { id: number }) => r.id);
+    expect(data2.reviews.some((r: { id: number }) => ids1.includes(r.id))).toBe(false);
   });
 
   it("rejects unknown status value", async () => {

@@ -12,6 +12,8 @@ export type ReviewRecord = {
   authorHash: string;
   rating: number;
   body: string;
+  /** 投稿元URLから採取したショップのサブドメイン (未記録なら null / undefined) */
+  shop?: string | null;
   status: ReviewStatus;
   hiddenReason: string | null;
   createdAt: Date;

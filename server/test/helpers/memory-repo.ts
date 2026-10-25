@@ -36,6 +36,7 @@ function clone(r: Row): ReviewRecord {
     authorHash: r.authorHash,
     rating: r.rating,
     body: r.body,
+    shop: r.shop ?? null,
     status: r.status,
     hiddenReason: r.hiddenReason,
     createdAt: new Date(r.createdAt),

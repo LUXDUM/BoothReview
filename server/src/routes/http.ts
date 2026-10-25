@@ -74,6 +74,7 @@ function toAdminReview(r: ReviewRecord & { reportCount: number }) {
     body: r.body,
     status: r.status,
     hiddenReason: r.hiddenReason,
+    shop: r.shop ?? null,
     reportCount: r.reportCount,
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
@@ -729,6 +730,13 @@ const DASHBOARD_HTML = `<!doctype html>
   input[type=text] { padding: 8px; border: 1px solid #cbd2da; border-radius: 6px; font: inherit; box-sizing: border-box; }
   .searchrow { display: flex; gap: 8px; }
   .searchrow input[type=text] { flex: 1; }
+  .filterrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .filterrow select { padding: 6px 8px; border: 1px solid #cbd2da; border-radius: 6px; font: inherit; background: #fff; }
+  .filterrow input[type=text] { flex: 1; min-width: 150px; }
+  .pager { display: flex; gap: 10px; align-items: center; margin-top: 10px; font-size: 12px; color: #6b7280; }
+  .pager .muted { font-size: 12px; }
+  tbody tr:hover { background: #f8fafc; }
+  .shopname { color: #6b7280; font-size: 12px; white-space: nowrap; }
   .anonid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   .btn { background: #0074c8; color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
   .btn:disabled { opacity: .5; cursor: default; }
@@ -756,13 +764,25 @@ const DASHBOARD_HTML = `<!doctype html>
     <section><h2>星評価の分布 (公開レビュー)</h2><div id="dist"></div></section>
     <section><h2>投稿の推移 (直近30日・全ステータス)</h2><div id="trend" class="barwrap"></div></section>
     <section><h2>通報の多いレビュー</h2><div id="reported"></div></section>
-    <section><h2>レビュー検索 (本文 / 匿名ID) と削除</h2>
-      <div class="searchrow">
-        <input id="sq" type="text" placeholder="本文の部分一致 (未入力可)">
-        <input id="sanon" type="text" placeholder="匿名ID (UUIDをペースト)">
-        <button id="sbtn" class="btn" type="button">検索</button>
+    <section><h2>レビュー一覧</h2>
+      <div class="filterrow">
+        <select id="fstatus">
+          <option value="">すべての状態</option>
+          <option value="published">公開のみ</option>
+          <option value="hidden">非表示のみ</option>
+          <option value="deleted">削除済みのみ</option>
+        </select>
+        <select id="forder">
+          <option value="created">新しい順</option>
+          <option value="reports">通報が多い順</option>
+        </select>
+        <input id="sq" type="text" placeholder="本文の部分一致 (任意)">
+        <input id="sanon" type="text" placeholder="匿名ID (UUID / 任意)">
+        <button id="sbtn" class="btn" type="button">一覧を取得</button>
+        <button id="sreset" class="ghost" type="button">条件をクリア</button>
       </div>
-      <div id="smsg" class="muted" style="margin-top:6px; font-size:12px">本文または匿名IDのどちらかを入力してください。匿名IDは拡張機能の「あなたの匿名ID」表示からコピーできます。</div>
+      <div id="smsg" class="muted" style="margin-top:6px; font-size:12px">条件を絞らずに取得すると、全レビューを新しい順に表示します。匿名IDは拡張機能の「あなたの匿名ID」表示からコピーできます。</div>
+      <div id="spager" class="pager"></div>
       <div id="sresults" style="margin-top:10px"></div>
     </section>
     <section><h2>投稿禁止 (BAN) リスト</h2><div id="blocks"></div></section>
@@ -855,7 +875,7 @@ const DASHBOARD_HTML = `<!doctype html>
     m.style.color = isError ? "#b3261e" : "";
   }
 
-  var SEARCH_HEAD = ["ID", "商品", "評価", "匿名ID", "状態", "通報", "本文", "日時", "操作"];
+  var SEARCH_HEAD = ["ID", "商品", "ショップ", "評価", "匿名ID", "状態", "通報", "本文", "日時", "操作"];
 
   function renderSearch(d) {
     var wrap = $("sresults");
@@ -864,7 +884,7 @@ const DASHBOARD_HTML = `<!doctype html>
       wrap.append(el("div", "muted", "該当するレビューはありません"));
       return;
     }
-    wrap.append(el("div", "muted", d.reviews.length + " 件 / 全 " + d.total + " 件"));
+    wrap.append(el("div", "muted", d.total + " 件中 " + d.reviews.length + " 件を表示"));
     var t = el("table");
     var tr = el("tr");
     for (var i = 0; i < SEARCH_HEAD.length; i++) tr.append(el("th", "", SEARCH_HEAD[i]));
@@ -904,6 +924,7 @@ const DASHBOARD_HTML = `<!doctype html>
       row.append(
         td(String(r.id)),
         itemTd,
+        td(r.shop === null || r.shop === undefined ? "―" : r.shop, "shopname"),
         td("★".repeat(r.rating)),
         td(r.author, "anonid"),
         stTd,
@@ -929,7 +950,7 @@ const DASHBOARD_HTML = `<!doctype html>
           if (res.status === 401) throw new Error("トークンが違います");
           if (!res.ok) throw new Error("HTTP " + res.status);
           sMsg("レビュー #" + id + " を " + statusName(status) + " にしました");
-          runSearch(true);
+          runList(listPage, true);
         })
         .catch(function (e) { sMsg("更新に失敗: " + e.message, true); });
     };
@@ -1013,19 +1034,36 @@ const DASHBOARD_HTML = `<!doctype html>
     wrap.appendChild(t);
   }
 
-  function runSearch(silent) {
+  // レビュー一覧 (全件・時間順)。条件はすべて任意で、空なら全レビューを新しい順に返す
+  var listPage = 1;
+  var LIST_PER_PAGE = 20;
+
+  function renderPager(totalPages, page) {
+    var wrap = $("spager");
+    wrap.textContent = "";
+    var prev = el("button", "ghost", "前へ");
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", function () { runList(page - 1, true); });
+    var next = el("button", "ghost", "次へ");
+    next.disabled = page >= totalPages;
+    next.addEventListener("click", function () { runList(page + 1, true); });
+    wrap.append(prev, el("span", "muted", page + " / " + totalPages + " ページ"), next);
+  }
+
+  function runList(page, silent) {
     var t = sessionStorage.getItem(KEY);
     if (!t) { showLogin(); return; }
-    var qs = [];
+    var p = page || 1;
+    var qs = ["page=" + p, "perPage=" + LIST_PER_PAGE];
+    var st = $("fstatus").value;
+    var od = $("forder").value;
+    if (st) qs.push("status=" + encodeURIComponent(st));
+    if (od) qs.push("order=" + encodeURIComponent(od));
     var q = $("sq").value.trim();
     var anon = $("sanon").value.trim();
     if (q) qs.push("query=" + encodeURIComponent(q));
     if (anon) qs.push("anonId=" + encodeURIComponent(anon));
-    if (qs.length === 0) {
-      if (!silent) sMsg("本文か匿名IDを入力してください", true);
-      return;
-    }
-    if (!silent) sMsg("検索中…");
+    if (!silent) sMsg("読み込み中…");
     fetch("/v1/admin/reviews?" + qs.join("&"), { headers: { authorization: "Bearer " + t } })
       .then(function (res) {
         if (res.status === 401) throw new Error("トークンが違います (ADMIN_TOKEN)");
@@ -1037,15 +1075,28 @@ const DASHBOARD_HTML = `<!doctype html>
         return res.json();
       })
       .then(function (d) {
-        sMsg(qs.length + " 件の条件で " + d.total + " 件ヒット");
+        listPage = p;
+        sMsg(d.total + " 件のレビュー (" + (od === "reports" ? "通報が多い順" : "新しい順") + ")");
+        renderPager(d.totalPages, p);
         renderSearch(d);
       })
-      .catch(function (e) { sMsg("検索に失敗: " + e.message, true); });
+      .catch(function (e) { sMsg("一覧の取得に失敗: " + e.message, true); });
   }
 
-  $("sbtn").addEventListener("click", function () { runSearch(false); });
-  $("sanon").addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(false); });
-  $("sq").addEventListener("keydown", function (e) { if (e.key === "Enter") runSearch(false); });
+  function resetListFilters() {
+    $("fstatus").value = "";
+    $("forder").value = "created";
+    $("sq").value = "";
+    $("sanon").value = "";
+    runList(1, true);
+  }
+
+  $("sbtn").addEventListener("click", function () { runList(1); });
+  $("sreset").addEventListener("click", resetListFilters);
+  $("fstatus").addEventListener("change", function () { runList(1, true); });
+  $("forder").addEventListener("change", function () { runList(1, true); });
+  $("sanon").addEventListener("keydown", function (e) { if (e.key === "Enter") runList(1); });
+  $("sq").addEventListener("keydown", function (e) { if (e.key === "Enter") runList(1); });
 
   function renderReported(d) {
     var wrap = $("reported"); wrap.textContent = "";
@@ -1105,6 +1156,7 @@ const DASHBOARD_HTML = `<!doctype html>
   function render(d) {
     renderCards(d); renderDist(d); renderTrend(d); renderReported(d); renderItems(d); renderServer(d);
     loadBlocks();
+    runList(1, true);
     $("at").textContent = new Date().toLocaleString() + " 取得";
   }
 
